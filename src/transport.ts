@@ -37,6 +37,25 @@ export class MailTransport extends StdioServerTransport {
 
   override async send(message: JSONRPCMessage): Promise<void> {
     if (!('method' in message) && 'id' in message && message.id !== undefined) this.finish(message.id);
+    if ('result' in message && typeof message.result === 'object' && message.result !== null) {
+      const result = message.result;
+      if (result.isError === true && Array.isArray(result.content)) {
+        const text = result.content.filter((item: unknown): item is { type: 'text'; text: string } =>
+          typeof item === 'object' && item !== null && 'type' in item && item.type === 'text'
+          && 'text' in item && typeof item.text === 'string').map(item => item.text).join('\n');
+        let json = false;
+        try {
+          const parsed: unknown = JSON.parse(text);
+          json = typeof parsed === 'object' && parsed !== null && 'error' in parsed
+            && typeof parsed.error === 'object' && parsed.error !== null && 'code' in parsed.error
+            && typeof parsed.error.code === 'string';
+        } catch {}
+        if (!json) message = { ...message, result: { ...result, content: [{ type: 'text', text: JSON.stringify({ error: {
+          code: 'INVALID_REQUEST', message: text || 'Tool request failed validation.', retryable: false,
+          guidance: 'Correct the arguments using the tool schema before retrying.',
+        } }) }] } };
+      }
+    }
     if (!this.shutdown.signal.aborted) await super.send(message);
   }
 

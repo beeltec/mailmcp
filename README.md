@@ -127,7 +127,7 @@ The old `scanLimit` argument remains accepted and ignored.
 
 Mailbox discovery uses each mailbox's actual container chain. Mail's account collection also includes nested folders.
 Copy canonical paths from `list_mailboxes`. Skip entries with `available: false` and report their reason.
-`messageCount` allows callers to skip empty folders. The server never selects the first of several ambiguous folders.
+`messageCount` allows callers to skip empty folders. Counts use bulk IDs because native counts were substantially slower in live Mail. The server never selects the first of several ambiguous folders.
 
 ### Mail analysis workflow
 
@@ -148,7 +148,8 @@ Batch body budgets above 16,000 are capped. Responses report the applied limits.
 `attachmentCoverage` remains `not_inspected` until the caller actually reads relevant files outside the server.
 
 Check MCP `isError` before consuming a result. Tool execution errors are JSON with `error.code`, `message`, `operation`,
-`mailbox`, `retryable`, and `guidance`. Protocol validation errors remain standard MCP errors.
+`mailbox`, `retryable`, and `guidance`. SDK tool validation errors use `INVALID_REQUEST`.
+JSON-RPC protocol errors remain standard MCP errors.
 Do not repeat unavailable-folder errors unchanged. A retryable read failure does not prove Mail has recovered.
 
 Message references include the mailbox, local ID, and Message-ID header.

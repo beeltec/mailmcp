@@ -34,12 +34,13 @@ function actualPath(mailbox, accountId) {
   var path = [];
   var current = mailbox;
   for (var depth = 0; depth < 31; depth++) {
-    var properties = current.properties();
-    if (properties.id) {
-      if (properties.id !== accountId) throw new Error('Mailbox is outside the allowed account.');
+    var id = null;
+    try { id = current.id(); } catch (_) {}
+    if (id) {
+      if (id !== accountId) throw new Error('Mailbox is outside the allowed account.');
       return path;
     }
-    path.unshift(properties.name);
+    path.unshift(current.name());
     current = current.container();
   }
   throw new Error('Mailbox nesting exceeds the supported depth.');
@@ -70,10 +71,7 @@ function mailboxList(account) {
   var result = boxes.map(function (box) {
     var path = actualPath(box, account.id());
     var entry = { path: path, unread: box.unreadCount(), available: true, messageCount: null };
-    try {
-      entry.messageCount = box.messages.length;
-      if (entry.messageCount === 0) box.messages.id();
-    }
+    try { entry.messageCount = box.messages.id().length; }
     catch (_) { entry.available = false; entry.reason = 'Mail cannot access this mailbox. Check it in Mail before retrying.'; }
     return entry;
   });
