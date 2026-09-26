@@ -34,7 +34,7 @@ function resolveMailbox(account, path) {
   var parent = account;
   for (var i = 0; i < path.length; i++) {
     var matches = parent.mailboxes.whose({ name: path[i] })();
-    if (matches.length !== 1) throw new Error('Mailbox is missing or ambiguous. List mailboxes again.');
+    if (matches.length !== 1) throw new Error('Mailbox path ' + JSON.stringify(path) + ' is missing or ambiguous. Use an exact path returned by list_mailboxes; do not translate mailbox names.');
     parent = matches[0];
   }
   if (parent.account().id() !== account.id()) throw new Error('Mailbox is outside the allowed account.');
@@ -43,11 +43,11 @@ function resolveMailbox(account, path) {
 
 function resolveMessage(account, ref) {
   var mailbox = resolveMailbox(account, ref.mailbox);
-  var matches = mailbox.messages.whose({ id: ref.id })();
-  if (matches.length !== 1 || matches[0].messageId() !== ref.messageId) {
+  var message = mailbox.messages.byId(ref.id);
+  if (!message.exists() || message.messageId() !== ref.messageId) {
     throw new Error('Message reference is stale. Search its mailbox again.');
   }
-  return matches[0];
+  return message;
 }
 
 function mailboxList(account) {
@@ -77,7 +77,54 @@ function summary(message, path) {
 }
 
 function recipients(collection) {
-  return collection().map(function (recipient) { return recipient.address(); });
+  return collection.address();
+}
+
+function searchMessages(mailbox, args) {
+  var ids = mailbox.messages.id();
+  var dates = mailbox.messages.dateReceived();
+  var senders = mailbox.messages.sender();
+  var subjects = mailbox.messages.subject();
+  var states = mailbox.messages.readStatus();
+  var flags = mailbox.messages.flagIndex();
+  var to = args.recipient ? mailbox.messages.toRecipients.address() : null;
+  var cc = args.recipient ? mailbox.messages.ccRecipients.address() : null;
+  var bcc = args.recipient ? mailbox.messages.bccRecipients.address() : null;
+  var after = mailbox.messages.id();
+  if (JSON.stringify(ids) !== JSON.stringify(after) || dates.length !== ids.length
+    || senders.length !== ids.length || subjects.length !== ids.length
+    || states.length !== ids.length || flags.length !== ids.length
+    || (to && to.length !== ids.length) || (cc && cc.length !== ids.length) || (bcc && bcc.length !== ids.length)) {
+    throw new Error('Mailbox changed during search. Retry the read-only search from offset 0.');
+  }
+  var since = args.since ? new Date(args.since).getTime() : null;
+  var before = args.before ? new Date(args.before).getTime() : null;
+  var matches = [];
+  for (var i = 0; i < ids.length; i++) {
+    var date = dates[i].getTime();
+    if (since !== null && date < since) continue;
+    if (before !== null && date >= before) continue;
+    if (args.sender && senders[i].toLowerCase().indexOf(args.sender.toLowerCase()) === -1) continue;
+    if (args.subject && subjects[i].toLowerCase().indexOf(args.subject.toLowerCase()) === -1) continue;
+    if (args.unread !== undefined && states[i] === args.unread) continue;
+    if (args.recipient) {
+      var addresses = to[i].concat(cc[i], bcc[i]);
+      if (!addresses.some(function (address) { return address.toLowerCase().indexOf(args.recipient.toLowerCase()) !== -1; })) continue;
+    }
+    matches.push({ id: ids[i], date: date, index: i });
+  }
+  matches.sort(function (a, b) { return b.date - a.date || b.id - a.id; });
+  var start = Math.min(args.offset, matches.length);
+  var end = Math.min(start + args.limit, matches.length);
+  var results = matches.slice(start, end).map(function (match) {
+    var index = match.index;
+    return { ref: { mailbox: args.mailbox, id: match.id, messageId: mailbox.messages.byId(match.id).messageId() },
+      subject: subjects[index], sender: senders[index], receivedAt: dates[index].toISOString(),
+      read: states[index], flag: flags[index] };
+  });
+  return { messages: results, scanned: ids.length, total: ids.length, matched: matches.length,
+    offset: start, limit: args.limit, nextOffset: end < matches.length ? end : null,
+    note: 'Searched the whole mailbox. Results are newest first. Offset counts matching messages. Follow nextOffset with unchanged filters. Restart at offset 0 if mail changes.' };
 }
 
 function outgoing(mail, id, email) {
@@ -128,21 +175,7 @@ function dispatch(mail, request) {
       return mailboxList(account);
     case 'search_messages': {
       var mailbox = resolveMailbox(account, args.mailbox);
-      var total = mailbox.messages.length;
-      var start = Math.min(total, args.offset);
-      var end = Math.min(total, start + args.scanLimit);
-      var results = [];
-      var i;
-      for (i = start; i < end && results.length < args.limit; i++) {
-        var message = mailbox.messages[i];
-        if (args.unread !== undefined && message.readStatus() === args.unread) continue;
-        if (args.subject && message.subject().toLowerCase().indexOf(args.subject.toLowerCase()) === -1) continue;
-        if (args.sender && message.sender().toLowerCase().indexOf(args.sender.toLowerCase()) === -1) continue;
-        if (args.since && message.dateReceived() < new Date(args.since)) continue;
-        results.push(summary(message, args.mailbox));
-      }
-      return { messages: results, scanned: i - start, total: total, nextOffset: i < total ? i : null,
-        note: 'Scans Mail storage order, not guaranteed date order. Offsets can shift when mail changes.' };
+      return searchMessages(mailbox, args);
     }
     case 'read_message': {
       var message = resolveMessage(account, args.ref);

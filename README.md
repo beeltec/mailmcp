@@ -71,7 +71,7 @@ Mail and your provider can still expire messages in Trash according to their own
 | Tools | Purpose |
 | --- | --- |
 | `list_accounts`, `list_mailboxes` | Discover allowed accounts and their existing mailboxes |
-| `search_messages` | Scan a bounded mailbox page by subject, sender, date, and unread state |
+| `search_messages` | Search a mailbox by subject, sender, recipient, received date, and unread state |
 | `read_message` | Read text in pages and inspect attachment metadata |
 | `set_message_state` | Set read state or flag color |
 | `move_message`, `trash_message` | Move within an allowed account or into its configured Trash |
@@ -81,10 +81,21 @@ Mail and your provider can still expire messages in Trash according to their own
 | `add_attachment`, `save_attachment` | Add a local file or save a downloaded received attachment |
 | `send_draft` | Send a reviewed draft when the user requests it |
 
-Search scans at most 500 messages and returns at most 50 matches per call.
-Follow `nextOffset` to continue. A page with no matches does not mean that later pages have no matches.
-Mail's storage order is not guaranteed to be chronological. New mail and moves can shift offsets.
-Search covers subject and sender text, not body text or an indexed archive.
+Search reads mailbox metadata in bulk and returns the newest matching messages first.
+Text filters match case-insensitive substrings. Use `sender` for incoming mail and `recipient` for To, Cc, or Bcc addresses in sent mail.
+Recipient addresses are also read in bulk, so broad searches do not query every message separately.
+Search does not read message bodies or use Mail's private database.
+
+`since` is inclusive; `before` is exclusive. Both accept `YYYY-MM-DD` or an ISO timestamp with an optional timezone.
+Dates and timestamps without a timezone use UTC. Use an explicit offset for local-day boundaries, such as `2026-09-12T00:00:00+02:00`.
+The default page size is 20. Larger requested limits are capped at 50 instead of rejected.
+`matched` counts all matches; `total` and `scanned` describe the mailbox metadata searched.
+Follow `nextOffset` with unchanged filters until it is `null`. An empty mailbox has zero matches.
+New mail and moves can shift offsets. Restart at offset 0 if the mailbox changes.
+Always copy mailbox paths from `list_mailboxes`; do not translate or guess names.
+
+Version 0.2 changes `offset` to count matching messages, not raw mailbox positions.
+The old `scanLimit` argument is accepted but ignored. Start existing searches again from offset 0 after updating and restarting the MCP connection.
 
 Message references include the mailbox, local ID, and Message-ID header.
 After moving a message, search the destination for a new reference.

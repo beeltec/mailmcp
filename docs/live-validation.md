@@ -38,3 +38,35 @@ Results were also inspected through Apple Mail's native interface.
 `npm run check`, `npm run build`, and `npm pack --dry-run` passed.
 The packed package installed locally and its CLI started successfully.
 No automated tests were created.
+
+## Search regression validation: version 0.2
+
+Investigated the reported Codex session and reproduced its date-only, oversized-page arguments.
+The affected account had 6,316 inbox messages and 1,987 sent messages during validation.
+Individual inbox index lookups took about 4.5 seconds per field before the change.
+Search now uses bulk metadata and direct message IDs. It does not read all message bodies or Message-ID headers.
+
+Final browser runs through MCP Inspector returned:
+
+| Operation | Observed time | Result |
+| --- | --- | --- |
+| Original inbox query with date-only input, limit 100, and scanLimit 1000 | 1.58 seconds | 50 of 56 matches |
+| Continuation at offset 50 | 1.22 seconds | Remaining six matches; no next page |
+| Sent recipient search over the same dates | 1.91 seconds | 13 matches |
+
+These are local observations, not timing guarantees. Mail load and synchronization can affect response time.
+Direct live MCP checks also covered:
+
+- Complete pagination with no duplicates and descending received dates.
+- Equivalent UTC, explicit-offset, and timezone-free date inputs.
+- Inclusive lower and exclusive upper date boundaries.
+- Case-insensitive text matching and complementary read/unread filters.
+- Empty mailboxes, no matches, and offsets beyond the last result.
+- Invalid calendar dates, reversed date ranges, negative limits, missing mailboxes, unknown accounts, and stale references.
+- Reading a returned message reference without changing its read state.
+- Broad recipient searches without a date bound: 1,678 matches, with pages returned in 1.97 and 1.53 seconds.
+- Cancellation after 102 milliseconds, followed by another successful call on the same connection.
+- Separate To, Cc, and Bcc matches using a disposable unsent draft in the designated test account.
+
+The draft's recipients were inspected in native Mail. The draft was moved into Trash; it was never sent.
+No real messages were moved or edited during this regression check.
