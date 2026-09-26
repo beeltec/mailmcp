@@ -2,7 +2,7 @@
 
 Checked on macOS 26.6.2 with Apple Mail and Node.js 24.13.1.
 All mail writes used disposable, self-addressed messages in the account selected for this task.
-MCP calls were made through the browser interface of MCP Inspector 2.8.0.
+Mail workflows were checked through the browser interface of MCP Inspector 2.8.0.
 Results were also inspected through Apple Mail's native interface.
 
 ## Observed results
@@ -21,6 +21,8 @@ Results were also inspected through Apple Mail's native interface.
 - A second send attempt using the consumed handle was rejected.
 - Text forward creation retained the supplied body and original text.
 - Test drafts, incoming messages, and sent copies were moved into Trash through Mail. Trash was not emptied.
+- Inspector cancellation returned a cancellation notice. The connection accepted the next request.
+- Direct protocol checks confirmed cancellation for request ID zero and clean shutdown on stdin EOF and SIGTERM.
 
 ## Mail limitations found during checks
 
@@ -34,4 +36,5 @@ Results were also inspected through Apple Mail's native interface.
 ## Build checks
 
 `npm run check`, `npm run build`, and `npm pack --dry-run` passed.
+The packed package installed locally and its CLI started successfully.
 No automated tests were created.

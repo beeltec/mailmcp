@@ -138,5 +138,6 @@ Use a disposable self-addressed message when checking writes. Do not use existin
 The server runs fixed scripts. Arguments are passed as JSON on stdin, never interpolated into executable source or a shell command.
 Calls are serialized. Each Mail operation has a 45-second timeout and a response size limit.
 Cancelled queued requests are skipped. Cancelling an active request stops its script, but cannot undo an Apple Event already received by Mail.
+Client disconnection and process termination cancel pending operations and stop active scripts.
 Timeouts can leave an action completed in Mail; inspect the result before retrying a write.
 Email content is returned to the connected MCP client. Its model provider's data handling still applies.
