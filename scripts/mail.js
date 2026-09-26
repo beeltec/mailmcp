@@ -224,6 +224,31 @@ function dispatch(mail, request) {
       var mailbox = resolveMailbox(account, args.mailbox);
       return searchMessages(mailbox, args);
     }
+    case 'search_mailboxes': {
+      var pages = [];
+      var remaining = [];
+      var count = 0;
+      var started = Date.now();
+      for (var index = 0; index < args.mailboxes.length; index++) {
+        var item = args.mailboxes[index];
+        if (count >= args.limit || Date.now() - started >= 10000) {
+          remaining = remaining.concat(args.mailboxes.slice(index));
+          break;
+        }
+        try {
+          var box = resolveMailbox(account, item.mailbox);
+          var page = searchMessages(box, Object.assign({}, args, item, { limit: args.limit - count }));
+          pages.push(Object.assign({ mailbox: item.mailbox }, page));
+          count += page.messages.length;
+          if (page.nextOffset !== null) remaining.push({ mailbox: item.mailbox, offset: page.nextOffset });
+        } catch (error) {
+          pages.push({ mailbox: item.mailbox, error: { code: 'FOLDER_SEARCH_FAILED', message: String(error.message || error),
+            guidance: 'Report this folder as incomplete. Check Mail before retrying it separately.' } });
+        }
+      }
+      return { pages: pages, remaining: remaining, complete: remaining.length === 0 && pages.every(function (page) { return !page.error; }),
+        note: 'Preserve each page and report folder errors. Continue remaining with unchanged filters; empty remaining does not remove earlier coverage gaps.' };
+    }
     case 'read_message':
       return readMessage(account, args);
     case 'read_messages': {

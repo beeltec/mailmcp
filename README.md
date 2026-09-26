@@ -97,7 +97,7 @@ Microsoft also documents [Deleted Items and Trash](https://support.microsoft.com
 | Tools | Purpose |
 | --- | --- |
 | `list_accounts`, `list_mailboxes` | Discover allowed accounts and their existing mailboxes |
-| `search_messages` | Search a mailbox by subject, sender, recipient, received date, and unread state |
+| `search_messages`, `search_mailboxes` | Search a mailbox by subject, sender, recipient, received date, and unread state |
 | `read_message`, `read_messages` | Read bounded body pages or batches and inspect attachment metadata |
 | `set_message_state` | Set read state or flag color |
 | `move_message`, `trash_message` | Move within an allowed account or into its configured Trash |
@@ -133,7 +133,8 @@ Copy canonical paths from `list_mailboxes`. Skip entries with `available: false`
 
 1. Discover only Mail tools. Avoid dumping unrelated tool catalogs.
 2. List accounts and mailboxes once. Reuse these results within the task.
-3. Search Inbox and Sent first, then other available, nonempty folders needed for the request.
+3. Use `search_mailboxes` for incoming folders and a separate recipient search for sent folders.
+   Each batch returns at most 50 messages and reports per-folder errors. Continue every `remaining` entry with unchanged filters.
 4. Follow every search continuation. Keep results by message reference to avoid reading the same message twice.
 5. Read with `read_messages`: up to ten messages, 12,000 body characters per batch by default, and at most 16,000.
 6. Emit one batch at a time. Do not concatenate large batches or slice bodies before presenting them to the model.
@@ -202,7 +203,7 @@ Validation uses live Mail and MCP Inspector checks. There are no automated tests
 Use a disposable self-addressed message when checking writes. Do not use existing mail as a test fixture.
 
 The server runs fixed scripts. Arguments are passed as JSON on stdin, never interpolated into executable source or a shell command.
-Calls are serialized. At most eight requests can be pending. Each request has a 45-second deadline including queue time.
+Calls are serialized. At most 32 requests can be pending. Each request has a 45-second deadline including queue time.
 Each Mail process also has a 45-second timeout and a response size limit. Submit one bounded batch at a time.
 Cancelled queued requests are skipped. Cancelling an active request stops its script, but cannot undo an Apple Event already received by Mail.
 Client disconnection and process termination cancel pending operations and stop active scripts.
