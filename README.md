@@ -25,6 +25,8 @@ The repository is currently private. The package is prepared for npm distributio
 `npm pack` creates an installable archive. Once published, users can install a pinned package version through npm.
 
 Setup lists account names and addresses. Select the accounts to allow; Trash mailboxes are detected automatically.
+Enter `All` to select every listed account, or enter account numbers separated by commas.
+`All` is case-insensitive and accepts surrounding spaces. Accounts with multiple sender addresses still ask which address to use.
 Setup asks you to select a Trash mailbox only when it cannot identify one unambiguously.
 Only setup can discover unconfigured accounts. MCP tools cannot change the allowlist.
 
