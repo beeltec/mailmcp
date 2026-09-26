@@ -39,8 +39,15 @@ export async function startServer(): Promise<void> {
   });
   const drafts = new Map<string, Draft>();
   const transport = new MailTransport();
-  let queue: Promise<unknown> = Promise.resolve();
-  let pending = 0;
+  const waiting: Array<() => Promise<void>> = [];
+  let active = false;
+  function pump(): void {
+    if (active) return;
+    const next = waiting.shift();
+    if (!next) return;
+    active = true;
+    void next().finally(() => { active = false; pump(); });
+  }
 
   function account(id: string): AccountConfig {
     const selected = config.accounts.find(item => item.id === id);
@@ -93,43 +100,43 @@ export async function startServer(): Promise<void> {
             : 'Check Mail and the error before retrying. Do not repeat unchanged failing calls.',
         } }) }], _meta: { queueMs: (started ?? Date.now()) - submitted, executionMs: started ? Date.now() - started : 0 } };
       };
-      if (pending >= 32) {
+      if (waiting.length + Number(active) >= 32) {
         transport.finish(context.requestId);
         return failure(new Error('QUEUE_FULL: Thirty-two Mail requests are already pending.'));
       }
-      pending++;
-      let released = false;
-      const release = () => {
-        if (!released) { released = true; pending--; }
-      };
-      const result = queue.then(async () => {
-        try {
-          signal.throwIfAborted();
-          started = Date.now();
-          const data = await handler(z.object(shape).parse(args), signal);
-          return { content: [{ type: 'text' as const, text: JSON.stringify(data) }],
-            _meta: { queueMs: started - submitted, executionMs: Date.now() - started } };
-        } catch (error) {
-          return failure(error);
-        } finally { release(); }
+      return await new Promise<ReturnType<typeof failure> | {
+        content: Array<{ type: 'text'; text: string }>;
+        _meta: { queueMs: number; executionMs: number };
+      }>(resolve => {
+        let settled = false;
+        const finish = (result: Parameters<typeof resolve>[0]) => {
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener('abort', abort);
+          transport.finish(context.requestId);
+          resolve(result);
+        };
+        const run = async () => {
+          try {
+            signal.throwIfAborted();
+            started = Date.now();
+            const data = await handler(z.object(shape).parse(args), signal);
+            finish({ content: [{ type: 'text', text: JSON.stringify(data) }],
+              _meta: { queueMs: started - submitted, executionMs: Date.now() - started } });
+          } catch (error) { finish(failure(error)); }
+        };
+        const abort = () => {
+          const index = waiting.indexOf(run);
+          if (index !== -1) waiting.splice(index, 1);
+          finish(failure(new Error(started === undefined
+            ? 'Request ended while waiting. No Mail action was started.'
+            : 'Request ended during Mail execution.')));
+        };
+        signal.addEventListener('abort', abort, { once: true });
+        if (signal.aborted) { abort(); return; }
+        waiting.push(run);
+        pump();
       });
-      queue = result;
-      let abort: (() => void) | undefined;
-      try {
-        return await Promise.race([result, new Promise<ReturnType<typeof failure>>(resolve => {
-          abort = () => {
-            if (started === undefined) release();
-            resolve(failure(new Error(started === undefined
-              ? 'Request ended while waiting. No Mail action was started.'
-              : 'Request ended during Mail execution.')));
-          };
-          signal.addEventListener('abort', abort, { once: true });
-          if (signal.aborted) abort();
-        })]);
-      } finally {
-        if (abort) signal.removeEventListener('abort', abort);
-        transport.finish(context.requestId);
-      }
     });
   }
 
