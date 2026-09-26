@@ -85,3 +85,13 @@ No real messages were moved or edited during this regression check.
   An invalid manual selection was rejected.
 
 These checks did not send, move, delete, or read any messages. No automated test files were added.
+
+## Select-all setup validation
+
+- Ran interactive setup with `  aLl  ` and selected the sender address for the account with aliases.
+- All five accounts were included, and Trash detection completed without a folder prompt.
+- The temporary result matched the current configuration. The active configuration was not overwritten.
+- Ran numbered selection with a duplicate number; the requested account appeared only once.
+- Entered `All,3` and verified rejection without changing the previously saved temporary configuration.
+
+No messages were changed and no automated tests were created.

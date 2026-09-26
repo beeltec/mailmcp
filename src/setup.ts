@@ -18,10 +18,12 @@ export async function setup(): Promise<void> {
   const terminal = createInterface({ input: stdin, output: stdout });
   try {
     accounts.forEach((account, index) => console.log(`${index + 1}. ${account.name} (${account.emails.join(', ')})`));
-    const selection = await terminal.question('Allow accounts (numbers separated by commas; replaces the current list): ');
-    const numbers = selection.split(',').map(value => Number(value.trim()));
+    const selection = await terminal.question('Allow accounts (All or numbers separated by commas; replaces the current list): ');
+    const numbers = selection.trim().toLowerCase() === 'all'
+      ? accounts.map((_account, index) => index + 1)
+      : selection.split(',').map(value => Number(value.trim()));
     if (!numbers.length || numbers.some(value => !Number.isInteger(value) || value < 1 || value > accounts.length)) {
-      throw new Error('Choose valid account numbers. Configuration was not changed.');
+      throw new Error('Enter All or valid account numbers. Configuration was not changed.');
     }
     const selected: AccountConfig[] = [];
     for (const number of new Set(numbers)) {
