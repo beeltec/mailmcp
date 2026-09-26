@@ -17,6 +17,7 @@ export async function callMail(
 ): Promise<unknown> {
   if (process.platform !== 'darwin') throw new Error('mailmcp requires macOS and Apple Mail.');
   signal?.throwIfAborted();
+  const readOnly = ['discover_accounts', 'account_info', 'list_mailboxes', 'search_messages', 'read_message', 'get_draft'].includes(operation);
   return new Promise((resolve, reject) => {
     const child = spawn('/usr/bin/osascript', ['-l', 'JavaScript', script], { stdio: ['pipe', 'pipe', 'pipe'] });
     const chunks: Buffer[] = [];
@@ -31,7 +32,9 @@ export async function callMail(
       reject(error);
     };
     const timer = setTimeout(() => fail(new Error(
-      'Mail timed out. The action may have completed. Inspect Mail before retrying a write or send.',
+      readOnly
+        ? `Mail timed out during ${operation}. This read-only request changed no messages. Retry once; for recipient searches, narrow the date range.`
+        : 'Mail timed out. The action may have completed. Inspect Mail before retrying a write or send.',
     )), 45_000);
     const abort = () => fail(new Error('Request cancelled. An in-flight Mail action may have completed. Inspect Mail before retrying.'));
     signal?.addEventListener('abort', abort, { once: true });
