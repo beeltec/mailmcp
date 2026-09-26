@@ -83,7 +83,7 @@ Mail and your provider can still expire messages in Trash according to their own
 
 Search reads mailbox metadata in bulk and returns the newest matching messages first.
 Text filters match case-insensitive substrings. Use `sender` for incoming mail and `recipient` for To, Cc, or Bcc addresses in sent mail.
-Recipient checks run after the other filters. Include `since` when searching a large sent mailbox.
+Recipient addresses are also read in bulk, so broad searches do not query every message separately.
 Search does not read message bodies or use Mail's private database.
 
 `since` is inclusive; `before` is exclusive. Both accept `YYYY-MM-DD` or an ISO timestamp with an optional timezone.

@@ -33,7 +33,7 @@ export async function callMail(
     };
     const timer = setTimeout(() => fail(new Error(
       readOnly
-        ? `Mail timed out during ${operation}. This read-only request changed no messages. Retry once; for recipient searches, narrow the date range.`
+        ? `Mail timed out during ${operation}. This read-only request changed no messages. Check that Mail is responsive before retrying.`
         : 'Mail timed out. The action may have completed. Inspect Mail before retrying a write or send.',
     )), 45_000);
     const abort = () => fail(new Error('Request cancelled. An in-flight Mail action may have completed. Inspect Mail before retrying.'));

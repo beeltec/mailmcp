@@ -100,7 +100,7 @@ export async function startServer(): Promise<void> {
   tool('search_messages', 'Search the whole mailbox using bulk metadata reads. Returns newest matching messages first, at most 50 per page. Follow nextOffset with unchanged filters until null. Use recipient to find sent replies. Empty mailboxes return matched: 0; no need to retry them. Text filters are case-insensitive substrings.', {
     accountId, mailbox: mailboxPath.describe('Copy an exact path array from list_mailboxes. Do not guess or translate names.'),
     subject: z.string().max(500).optional(), sender: z.string().max(500).optional(),
-    recipient: z.string().max(500).optional().describe('Substring of a To, Cc, or Bcc address. Use for sent mail, e.g. @example.com. Add since to narrow recipient searches.'),
+    recipient: z.string().max(500).optional().describe('Substring of a To, Cc, or Bcc address. Use for sent mail, e.g. @example.com.'),
     unread: z.boolean().optional(), since: searchDate.optional().describe('Inclusive received-date bound: YYYY-MM-DD or ISO timestamp. Missing timezone means UTC.'),
     before: searchDate.optional().describe('Exclusive received-date bound: YYYY-MM-DD or ISO timestamp. Missing timezone means UTC.'),
     offset: z.number().int().min(0).max(10_000_000).default(0).describe('Offset into matching messages. Use nextOffset from the previous page.'),

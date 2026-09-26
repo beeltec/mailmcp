@@ -87,10 +87,14 @@ function searchMessages(mailbox, args) {
   var subjects = mailbox.messages.subject();
   var states = mailbox.messages.readStatus();
   var flags = mailbox.messages.flagIndex();
+  var to = args.recipient ? mailbox.messages.toRecipients.address() : null;
+  var cc = args.recipient ? mailbox.messages.ccRecipients.address() : null;
+  var bcc = args.recipient ? mailbox.messages.bccRecipients.address() : null;
   var after = mailbox.messages.id();
   if (JSON.stringify(ids) !== JSON.stringify(after) || dates.length !== ids.length
     || senders.length !== ids.length || subjects.length !== ids.length
-    || states.length !== ids.length || flags.length !== ids.length) {
+    || states.length !== ids.length || flags.length !== ids.length
+    || (to && to.length !== ids.length) || (cc && cc.length !== ids.length) || (bcc && bcc.length !== ids.length)) {
     throw new Error('Mailbox changed during search. Retry the read-only search from offset 0.');
   }
   var since = args.since ? new Date(args.since).getTime() : null;
@@ -104,8 +108,7 @@ function searchMessages(mailbox, args) {
     if (args.subject && subjects[i].toLowerCase().indexOf(args.subject.toLowerCase()) === -1) continue;
     if (args.unread !== undefined && states[i] === args.unread) continue;
     if (args.recipient) {
-      var message = mailbox.messages.byId(ids[i]);
-      var addresses = recipients(message.toRecipients).concat(recipients(message.ccRecipients), recipients(message.bccRecipients));
+      var addresses = to[i].concat(cc[i], bcc[i]);
       if (!addresses.some(function (address) { return address.toLowerCase().indexOf(args.recipient.toLowerCase()) !== -1; })) continue;
     }
     matches.push({ id: ids[i], date: date, index: i });
