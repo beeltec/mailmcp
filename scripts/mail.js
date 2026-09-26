@@ -176,12 +176,15 @@ function dispatch(mail, request) {
     case 'setup_mailboxes': {
       var mailboxes = mailboxList(account);
       var trashNames = [];
+      var trashChildren = [];
       try {
-        var trashChildren = mail.trashMailbox.mailboxes();
-        for (var i = 0; i < trashChildren.length; i++) {
-          if (trashChildren[i].account().id() === request.account.id) trashNames.push(trashChildren[i].name());
-        }
-      } catch (_) { trashNames = []; }
+        trashChildren = mail.trashMailbox.mailboxes();
+      } catch (_) {}
+      for (var i = 0; i < trashChildren.length; i++) {
+        var owner;
+        try { owner = trashChildren[i].account().id(); } catch (_) { continue; }
+        if (owner === request.account.id) trashNames.push(trashChildren[i].name());
+      }
       return { mailboxes: mailboxes, trashNames: trashNames };
     }
     case 'search_messages': {
