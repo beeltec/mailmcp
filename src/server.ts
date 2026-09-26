@@ -49,7 +49,10 @@ export async function startServer(): Promise<void> {
     const selected = draft(token);
     selected.preview = draftSchema.parse(info);
     selected.revision = createHash('sha256').update(JSON.stringify({ info: selected.preview, attachments: selected.attachments })).digest('hex');
-    return { draftToken: token, revision: selected.revision, ...selected.preview, addedAttachments: selected.attachments };
+    return { draftToken: token, revision: selected.revision, ...selected.preview,
+      addedAttachments: selected.attachments,
+      attachmentNote: 'Mail cannot reliably enumerate open-draft attachments. This list records files added through MCP, not a complete inventory. Inspect attachments in Mail before sending.',
+    };
   }
 
   function tool<S extends z.ZodRawShape>(
@@ -142,13 +145,6 @@ export async function startServer(): Promise<void> {
       const selected = draft(args.draftToken);
       return preview(args.draftToken, await callMail('get_draft', { id: selected.id }, selected.account));
     });
-  tool('update_draft', 'Replace draft subject or plain-text body. Replacing the body also replaces quoted text. Recipients can be edited in Mail.', {
-    draftToken, subject: subject.optional(), body: body.optional(),
-  }, false, async args => {
-    const selected = draft(args.draftToken);
-    if (args.subject === undefined && args.body === undefined) throw new Error('Provide subject or body.');
-    return preview(args.draftToken, await callMail('update_draft', { ...args, id: selected.id }, selected.account));
-  });
   tool('add_attachment', 'Attach a local regular file explicitly selected by the user to a draft. Maximum file size is 25 MiB.', {
     draftToken, path: z.string().min(1).max(4096),
   }, false, async args => {
@@ -166,6 +162,8 @@ export async function startServer(): Promise<void> {
   }, false, async args => {
     const selected = draft(args.draftToken);
     if (args.revision !== selected.revision || !selected.preview) throw new Error('Read and review the latest draft preview before sending.');
+    const current = draftSchema.parse(await callMail('get_draft', { id: selected.id }, selected.account));
+    if (JSON.stringify(current) !== JSON.stringify(selected.preview)) throw new Error('Draft changed. Read and review it again before sending.');
     drafts.delete(args.draftToken);
     return callMail('send_draft', { id: selected.id, expected: JSON.stringify(selected.preview) }, selected.account);
   });

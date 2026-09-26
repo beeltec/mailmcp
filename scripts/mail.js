@@ -83,9 +83,14 @@ function outgoing(mail, id, email) {
 
 function draftInfo(draft) {
   return {
-    id: draft.id(), sender: draft.sender(), subject: draft.subject(), body: draft.content(),
+    id: draft.id(), sender: draft.sender(), subject: draft.subject(),
+    body: normalizedBody(draft.content()),
     to: recipients(draft.toRecipients), cc: recipients(draft.ccRecipients), bcc: recipients(draft.bccRecipients),
   };
+}
+
+function normalizedBody(text) {
+  return text.replace(/\uFFFC/g, '').replace(/\s+$/, '');
 }
 
 function setRecipients(mail, draft, args) {
@@ -172,24 +177,18 @@ function dispatch(mail, request) {
       } else {
         var original = resolveMessage(account, args.ref);
         draft = args.kind === 'reply'
-          ? mail.reply(original, { openingWindow: true, replyToAll: args.replyAll })
-          : mail.forward(original, { openingWindow: true });
+          ? mail.reply(original, { openingWindow: false, replyToAll: args.replyAll })
+          : mail.forward(original, { openingWindow: false });
         draft.sender = request.account.email;
         draft.content = args.body + '\n\n' + draft.content();
         if (args.kind === 'forward') setRecipients(mail, draft, args);
+        draft.visible = true;
       }
       mail.save(draft);
       return draftInfo(draft);
     }
     case 'get_draft':
       return draftInfo(outgoing(mail, args.id, request.account.email));
-    case 'update_draft': {
-      var draft = outgoing(mail, args.id, request.account.email);
-      if (args.subject !== undefined) draft.subject = args.subject;
-      if (args.body !== undefined) draft.content = args.body;
-      mail.save(draft);
-      return draftInfo(draft);
-    }
     case 'add_attachment': {
       var draft = outgoing(mail, args.id, request.account.email);
       draft.content.attachments.push(mail.Attachment({ fileName: Path(args.path) }));
