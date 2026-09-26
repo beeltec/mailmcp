@@ -171,7 +171,7 @@ export async function startServer(): Promise<void> {
     accountId, ref, bodyOffset: z.number().int().min(0).default(0),
     bodyLimit: z.number().int().min(1).default(6000).describe('Requested body characters per message; capped at 12000. Follow nextBodyOffset.'),
   }, true, async (args, signal) => callMail('read_message', { ...args, bodyLimit: Math.min(args.bodyLimit, 12_000) }, account(args.accountId), signal));
-  tool('read_messages', 'Read up to 10 messages within a combined body budget. Emit this result directly; do not combine batches or slice bodies. Follow nextBodyOffset for each body and remaining for unprocessed entries. Attachment contents are not inspected.', {
+  tool('read_messages', 'Read up to 10 messages within a combined body budget. Emit this result directly; do not combine batches or slice bodies. Follow nextBodyOffset for each body and remaining for unprocessed entries. Report per-message errors as unread; successful results are preserved. Attachment contents are not inspected.', {
     accountId, messages: z.array(z.object({ ref, bodyOffset: z.number().int().min(0).default(0) })).min(1).max(10),
     bodyLimit: z.number().int().min(1).default(6000).describe('Requested body characters per message; capped at 12000. Follow nextBodyOffset.'),
     bodyBudget: z.number().int().min(1).default(12_000).describe('Requested combined body characters; capped at 16000. Follow remaining and nextBodyOffset.'),

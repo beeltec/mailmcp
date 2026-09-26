@@ -253,17 +253,23 @@ function dispatch(mail, request) {
       return readMessage(account, args);
     case 'read_messages': {
       var results = [];
+      var errors = [];
       var used = 0;
       var started = Date.now();
       var index = 0;
       for (; index < args.messages.length && used < args.bodyBudget && Date.now() - started < 10000; index++) {
         var item = args.messages[index];
-        var value = readMessage(account, { ref: item.ref, bodyOffset: item.bodyOffset,
-          bodyLimit: Math.min(args.bodyLimit, args.bodyBudget - used) });
-        used += value.body.length;
-        results.push(value);
+        try {
+          var value = readMessage(account, { ref: item.ref, bodyOffset: item.bodyOffset,
+            bodyLimit: Math.min(args.bodyLimit, args.bodyBudget - used) });
+          used += value.body.length;
+          results.push(value);
+        } catch (error) {
+          errors.push({ ref: item.ref, bodyOffset: item.bodyOffset, code: 'MESSAGE_READ_FAILED',
+            message: String(error.message || error), guidance: 'Report this message as unread. Refresh stale references before retrying.' });
+        }
       }
-      return { messages: results, processed: index, remaining: args.messages.slice(index),
+      return { messages: results, errors: errors, processed: index, remaining: args.messages.slice(index),
         bodyCharacters: used, bodyBudget: args.bodyBudget, bodyLimit: args.bodyLimit, attachmentCoverage: 'Attachment metadata only. Inspect relevant files before claiming complete coverage.',
         note: 'Read every nextBodyOffset and remaining entry. Do not slice bodies or combine multiple batches in one output.' };
     }
