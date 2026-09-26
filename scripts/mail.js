@@ -30,40 +30,56 @@ function verifySender(mail, config) {
   }
 }
 
-function resolveMailbox(account, path) {
-  var parent = account;
-  for (var i = 0; i < path.length; i++) {
-    var matches = parent.mailboxes.whose({ name: path[i] })();
-    if (matches.length !== 1) throw new Error('Mailbox path ' + JSON.stringify(path) + ' is missing or ambiguous. Use an exact path returned by list_mailboxes; do not translate mailbox names.');
-    parent = matches[0];
+function actualPath(mailbox, accountId) {
+  var path = [];
+  var current = mailbox;
+  for (var depth = 0; depth < 31; depth++) {
+    var properties = current.properties();
+    if (properties.id) {
+      if (properties.id !== accountId) throw new Error('Mailbox is outside the allowed account.');
+      return path;
+    }
+    path.unshift(properties.name);
+    current = current.container();
   }
-  if (parent.account().id() !== account.id()) throw new Error('Mailbox is outside the allowed account.');
-  return parent;
+  throw new Error('Mailbox nesting exceeds the supported depth.');
+}
+
+function resolveMailbox(account, path) {
+  var found = account.mailboxes.whose({ name: path[path.length - 1] })();
+  var matches = found.filter(function (mailbox) {
+    return JSON.stringify(actualPath(mailbox, account.id())) === JSON.stringify(path);
+  });
+  if (matches.length !== 1) throw new Error('MAILBOX_UNAVAILABLE: Exact mailbox path is missing or ambiguous: ' + JSON.stringify(path) + '. List mailboxes again.');
+  if (matches[0].account().id() !== account.id()) throw new Error('Mailbox is outside the allowed account.');
+  return matches[0];
 }
 
 function resolveMessage(account, ref) {
   var mailbox = resolveMailbox(account, ref.mailbox);
   var message = mailbox.messages.byId(ref.id);
   if (!message.exists() || message.messageId() !== ref.messageId) {
-    throw new Error('Message reference is stale. Search its mailbox again.');
+    throw new Error('STALE_REFERENCE: Message reference is stale. Search its mailbox again.');
   }
   return message;
 }
 
 function mailboxList(account) {
-  var result = [];
-  function visit(parent, path) {
-    if (path.length > 30) throw new Error('Mailbox nesting exceeds the supported depth.');
-    var children = parent.mailboxes();
-    for (var i = 0; i < children.length; i++) {
-      if (result.length >= 1000) throw new Error('Account has more than 1000 mailboxes.');
-      var child = children[i];
-      var next = path.concat(child.name());
-      result.push({ path: next, unread: child.unreadCount() });
-      visit(child, next);
+  var boxes = account.mailboxes();
+  if (boxes.length > 1000) throw new Error('Account has more than 1000 mailboxes.');
+  var result = boxes.map(function (box) {
+    var path = actualPath(box, account.id());
+    var entry = { path: path, unread: box.unreadCount(), available: true, messageCount: null };
+    try { entry.messageCount = box.messages.id().length; }
+    catch (_) { entry.available = false; entry.reason = 'Mail cannot access this mailbox. Check it in Mail before retrying.'; }
+    return entry;
+  });
+  result.forEach(function (entry) {
+    if (result.filter(function (other) { return JSON.stringify(other.path) === JSON.stringify(entry.path); }).length > 1) {
+      entry.available = false;
+      entry.reason = 'Mail exposes more than one mailbox at this exact path.';
     }
-  }
-  visit(account, []);
+  });
   return result;
 }
 
@@ -81,50 +97,66 @@ function recipients(collection) {
 }
 
 function searchMessages(mailbox, args) {
+  var started = Date.now();
   var ids = mailbox.messages.id();
   var dates = mailbox.messages.dateReceived();
-  var senders = mailbox.messages.sender();
-  var subjects = mailbox.messages.subject();
-  var states = mailbox.messages.readStatus();
-  var flags = mailbox.messages.flagIndex();
-  var to = args.recipient ? mailbox.messages.toRecipients.address() : null;
-  var cc = args.recipient ? mailbox.messages.ccRecipients.address() : null;
-  var bcc = args.recipient ? mailbox.messages.bccRecipients.address() : null;
-  var after = mailbox.messages.id();
-  if (JSON.stringify(ids) !== JSON.stringify(after) || dates.length !== ids.length
-    || senders.length !== ids.length || subjects.length !== ids.length
-    || states.length !== ids.length || flags.length !== ids.length
-    || (to && to.length !== ids.length) || (cc && cc.length !== ids.length) || (bcc && bcc.length !== ids.length)) {
-    throw new Error('Mailbox changed during search. Retry the read-only search from offset 0.');
-  }
   var since = args.since ? new Date(args.since).getTime() : null;
   var before = args.before ? new Date(args.before).getTime() : null;
-  var matches = [];
+  if (dates.length !== ids.length) throw new Error('MAILBOX_CHANGED: Mailbox changed. Restart from offset 0.');
+  var candidates = [];
   for (var i = 0; i < ids.length; i++) {
     var date = dates[i].getTime();
     if (since !== null && date < since) continue;
     if (before !== null && date >= before) continue;
-    if (args.sender && senders[i].toLowerCase().indexOf(args.sender.toLowerCase()) === -1) continue;
-    if (args.subject && subjects[i].toLowerCase().indexOf(args.subject.toLowerCase()) === -1) continue;
-    if (args.unread !== undefined && states[i] === args.unread) continue;
+    candidates.push({ id: ids[i], date: date, index: i });
+  }
+  candidates.sort(function (a, b) { return b.date - a.date || b.id - a.id; });
+  var datesMs = Date.now() - started;
+  var results = [];
+  var position = Math.min(args.offset, candidates.length);
+  var examined = 0;
+  var filterStarted = Date.now();
+  while (position < candidates.length && results.length < args.limit && examined < 100 && Date.now() - filterStarted < 5000) {
+    var match = candidates[position++];
+    examined++;
+    var message = mailbox.messages.byId(match.id);
+    var sender = message.sender();
+    if (args.sender && sender.toLowerCase().indexOf(args.sender.toLowerCase()) === -1) continue;
+    var subject = message.subject();
+    if (args.subject && subject.toLowerCase().indexOf(args.subject.toLowerCase()) === -1) continue;
+    var read = message.readStatus();
+    if (args.unread !== undefined && read === args.unread) continue;
     if (args.recipient) {
-      var addresses = to[i].concat(cc[i], bcc[i]);
+      var addresses = recipients(message.toRecipients).concat(recipients(message.ccRecipients), recipients(message.bccRecipients));
       if (!addresses.some(function (address) { return address.toLowerCase().indexOf(args.recipient.toLowerCase()) !== -1; })) continue;
     }
-    matches.push({ id: ids[i], date: date, index: i });
+    results.push({ ref: { mailbox: args.mailbox, id: match.id, messageId: message.messageId() },
+      subject: subject, sender: sender, receivedAt: new Date(match.date).toISOString(), read: read, flag: message.flagIndex() });
   }
-  matches.sort(function (a, b) { return b.date - a.date || b.id - a.id; });
-  var start = Math.min(args.offset, matches.length);
-  var end = Math.min(start + args.limit, matches.length);
-  var results = matches.slice(start, end).map(function (match) {
-    var index = match.index;
-    return { ref: { mailbox: args.mailbox, id: match.id, messageId: mailbox.messages.byId(match.id).messageId() },
-      subject: subjects[index], sender: senders[index], receivedAt: dates[index].toISOString(),
-      read: states[index], flag: flags[index] };
+  if (JSON.stringify(ids) !== JSON.stringify(mailbox.messages.id())) throw new Error('MAILBOX_CHANGED: Mailbox changed. Restart from offset 0.');
+  return { messages: results, total: ids.length, dateCandidates: candidates.length, scanned: examined,
+    offset: args.offset, nextOffset: position < candidates.length ? position : null,
+    complete: position === candidates.length, timings: { datesMs: datesMs, filterMs: Date.now() - filterStarted },
+    note: 'Offset counts date candidates, not matches. Follow nextOffset with unchanged filters even when messages is empty. Reuse results; restart at 0 if mail changes.' };
+}
+
+function readMessage(account, args) {
+  var message = resolveMessage(account, args.ref);
+  var body = message.content();
+  var attachments = message.mailAttachments();
+  return Object.assign(summary(message, args.ref.mailbox), {
+    to: recipients(message.toRecipients), cc: recipients(message.ccRecipients),
+    body: body.slice(args.bodyOffset, args.bodyOffset + args.bodyLimit),
+    bodyLength: body.length,
+    nextBodyOffset: args.bodyOffset + args.bodyLimit < body.length ? args.bodyOffset + args.bodyLimit : null,
+    attachmentCoverage: attachments.length ? 'not_inspected' : 'no_attachments',
+    attachments: attachments.map(function (attachment) {
+      var mimeType = null;
+      try { mimeType = attachment.mimeType(); } catch (_) {}
+      return { id: attachment.id(), name: attachment.name(), mimeType: mimeType,
+        size: attachment.fileSize(), downloaded: attachment.downloaded() };
+    }),
   });
-  return { messages: results, scanned: ids.length, total: ids.length, matched: matches.length,
-    offset: start, limit: args.limit, nextOffset: end < matches.length ? end : null,
-    note: 'Searched the whole mailbox. Results are newest first. Offset counts matching messages. Follow nextOffset with unchanged filters. Restart at offset 0 if mail changes.' };
 }
 
 function outgoing(mail, id, email) {
@@ -191,21 +223,23 @@ function dispatch(mail, request) {
       var mailbox = resolveMailbox(account, args.mailbox);
       return searchMessages(mailbox, args);
     }
-    case 'read_message': {
-      var message = resolveMessage(account, args.ref);
-      var body = message.content();
-      var attachments = message.mailAttachments();
-      return Object.assign(summary(message, args.ref.mailbox), {
-        to: recipients(message.toRecipients), cc: recipients(message.ccRecipients),
-        body: body.slice(args.bodyOffset, args.bodyOffset + args.bodyLimit),
-        nextBodyOffset: args.bodyOffset + args.bodyLimit < body.length ? args.bodyOffset + args.bodyLimit : null,
-        attachments: attachments.map(function (attachment) {
-          var mimeType = null;
-          try { mimeType = attachment.mimeType(); } catch (_) {}
-          return { id: attachment.id(), name: attachment.name(), mimeType: mimeType,
-            size: attachment.fileSize(), downloaded: attachment.downloaded() };
-        }),
-      });
+    case 'read_message':
+      return readMessage(account, args);
+    case 'read_messages': {
+      var results = [];
+      var used = 0;
+      var started = Date.now();
+      var index = 0;
+      for (; index < args.messages.length && used < args.bodyBudget && Date.now() - started < 10000; index++) {
+        var item = args.messages[index];
+        var value = readMessage(account, { ref: item.ref, bodyOffset: item.bodyOffset,
+          bodyLimit: Math.min(args.bodyLimit, args.bodyBudget - used) });
+        used += value.body.length;
+        results.push(value);
+      }
+      return { messages: results, processed: index, remaining: args.messages.slice(index),
+        bodyCharacters: used, attachmentCoverage: 'Attachment metadata only. Inspect relevant files before claiming complete coverage.',
+        note: 'Read every nextBodyOffset and remaining entry. Do not slice bodies or combine multiple batches in one output.' };
     }
     case 'set_message_state': {
       var message = resolveMessage(account, args.ref);
