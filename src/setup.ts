@@ -3,9 +3,13 @@ import { stdin, stdout } from 'node:process';
 import { z } from 'zod';
 import { callMail } from './bridge.js';
 import { configPath, mailboxPath, saveConfig, type AccountConfig } from './config.js';
+import { selectTrash } from './trash.js';
 
 const accountsSchema = z.array(z.object({ id: z.string(), name: z.string(), emails: z.array(z.string()) }));
-const mailboxesSchema = z.array(z.object({ path: mailboxPath }));
+const setupMailboxesSchema = z.object({
+  mailboxes: z.array(z.object({ path: mailboxPath })),
+  trashNames: z.array(z.string()),
+});
 
 export async function setup(): Promise<void> {
   if (!stdin.isTTY) throw new Error('Run setup in an interactive terminal. You can also edit the configuration file directly.');
@@ -26,13 +30,9 @@ export async function setup(): Promise<void> {
       if (account.emails.length > 1) email = await terminal.question(`Sender email for ${account.name} (${account.emails.join(', ')}): `);
       if (!email || !account.emails.includes(email)) throw new Error('Select an email configured in this account.');
       const partial = { id: account.id, email, trash: ['pending'] };
-      const mailboxes = mailboxesSchema.parse(await callMail('list_mailboxes', {}, partial));
-      console.log(`\nMailboxes for ${account.name}:`);
-      mailboxes.forEach((mailbox, index) => console.log(`${index + 1}. ${mailbox.path.join(' / ')}`));
-      const index = Number(await terminal.question('Which mailbox is Trash? Enter its number: ')) - 1;
-      const trash = mailboxes[index];
-      if (!Number.isInteger(index) || !trash) throw new Error('Choose a valid Trash mailbox. Configuration was not changed.');
-      selected.push({ id: account.id, email, trash: trash.path });
+      const { mailboxes, trashNames } = setupMailboxesSchema.parse(await callMail('setup_mailboxes', {}, partial));
+      const trash = await selectTrash(account.name, mailboxes, trashNames, terminal);
+      selected.push({ id: account.id, email, trash });
     }
     await saveConfig({ accounts: selected });
     console.log(`\nSaved ${configPath()}. Restart your MCP connection to apply changes.`);

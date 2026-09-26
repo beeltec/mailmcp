@@ -24,7 +24,8 @@ mailmcp setup
 The repository is currently private. The package is prepared for npm distribution but has not been published.
 `npm pack` creates an installable archive. Once published, users can install a pinned package version through npm.
 
-Setup lists account names and addresses. Select the accounts to allow, then select each account's Trash mailbox.
+Setup lists account names and addresses. Select the accounts to allow; Trash mailboxes are detected automatically.
+Setup asks you to select a Trash mailbox only when it cannot identify one unambiguously.
 Only setup can discover unconfigured accounts. MCP tools cannot change the allowlist.
 
 ## Connect Codex
@@ -63,8 +64,31 @@ Composing and sending also require a sender address that belongs to exactly one 
 
 Mailbox paths contain exact names from `list_mailboxes`, not necessarily the translated names shown in Mail's sidebar.
 For nested mailboxes, use one name per path segment.
-Select the actual Trash mailbox. The server uses your mapping and never calls Mail's delete command.
+The server uses your Trash mapping and never calls Mail's delete command.
 Mail and your provider can still expire messages in Trash according to their own settings.
+
+### Automatic Trash detection
+
+Setup first checks the account-specific children of Mail's unified Trash mailbox.
+It matches the assigned name to a unique mailbox path in the selected account, including custom or nested names.
+If Mail cannot provide this assignment, setup looks for a single recognized name.
+Names are matched in full, ignoring case and surrounding whitespace, with Unicode normalization.
+The original path is saved unchanged.
+
+Recognized names include `Trash`, `Bin`, `Deleted Messages`, `Deleted Items`, `Papierkorb`, `Corbeille`, `Cestino`, `Papelera`,
+`Prullenmand`, `Lixo`, `Papirkurv`, `ゴミ箱`, and `휴지통`.
+Name-only detection covers top-level folders and children of `INBOX`, `[Gmail]`, or `[Google Mail]`.
+It does not guess from folders such as `Trash backup` or `Archive / Trash`.
+Missing or conflicting matches trigger the manual selector. Invalid selections leave the configuration unchanged.
+
+IMAP defines a `\Trash` special-use attribute, not a universal folder name ([RFC 6154](https://www.rfc-editor.org/rfc/rfc6154.html#section-2)).
+Mail's scripting dictionary does not expose that attribute directly, so this server uses Mail's assigned mailbox and then names.
+Localized names follow Apple's guidance in [German](https://support.apple.com/de-de/guide/icloud/mm6b1a7ab7/icloud),
+[French](https://support.apple.com/fr-fr/102428), [Italian](https://support.apple.com/it-it/102428),
+[Spanish](https://support.apple.com/es-es/102428), [Dutch](https://support.apple.com/nl-nl/102428),
+[Portuguese](https://support.apple.com/pt-br/102428), [Danish](https://support.apple.com/da-dk/102428),
+[Japanese](https://support.apple.com/ja-jp/102428), and [Korean](https://support.apple.com/ko-kr/102428).
+Microsoft also documents [Deleted Items and Trash](https://support.microsoft.com/en-us/outlook/mail/recover-and-restore-deleted-items-in-outlook).
 
 ## Tools
 

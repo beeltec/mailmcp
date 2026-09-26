@@ -70,3 +70,18 @@ Direct live MCP checks also covered:
 
 The draft's recipients were inspected in native Mail. The draft was moved into Trash; it was never sent.
 No real messages were moved or edited during this regression check.
+
+## Automatic Trash setup validation: version 0.3
+
+- Ran the complete interactive setup against five live Mail accounts, saving to a temporary configuration file.
+- Every Trash path was detected without a folder prompt: `Deleted Messages`, `Trash`, or `Papierkorb`.
+- The generated configuration matched the user's existing configuration exactly. The user's configuration was not overwritten.
+- Repeated live mailbox discovery and selection after the accountless-mailbox handling fix.
+- Exercised the interactive fallback with Gmail's real mailbox list and assignment metadata omitted.
+  Its `Papierkorb` and `Deleted Messages` candidates triggered a prompt; selecting `Papierkorb` returned the exact path.
+- Manually exercised the terminal selector with localized names, a Unicode-width variant, and a Gmail namespace.
+  The selected paths retained their original spelling.
+- `Archive / Trash` and `Trash backup` did not trigger automatic name matching.
+  An invalid manual selection was rejected.
+
+These checks did not send, move, delete, or read any messages. No automated test files were added.

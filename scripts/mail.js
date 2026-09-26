@@ -173,6 +173,20 @@ function dispatch(mail, request) {
       return { id: account.id(), name: account.name(), email: request.account.email, trash: request.account.trash };
     case 'list_mailboxes':
       return mailboxList(account);
+    case 'setup_mailboxes': {
+      var mailboxes = mailboxList(account);
+      var trashNames = [];
+      var trashChildren = [];
+      try {
+        trashChildren = mail.trashMailbox.mailboxes();
+      } catch (_) {}
+      for (var i = 0; i < trashChildren.length; i++) {
+        var owner;
+        try { owner = trashChildren[i].account().id(); } catch (_) { continue; }
+        if (owner === request.account.id) trashNames.push(trashChildren[i].name());
+      }
+      return { mailboxes: mailboxes, trashNames: trashNames };
+    }
     case 'search_messages': {
       var mailbox = resolveMailbox(account, args.mailbox);
       return searchMessages(mailbox, args);
