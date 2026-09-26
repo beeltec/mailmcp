@@ -75,7 +75,7 @@ Mail and your provider can still expire messages in Trash according to their own
 | `set_message_state` | Set read state or flag color |
 | `move_message`, `trash_message` | Move within an allowed account or into its configured Trash |
 | `create_draft` | Create a visible draft from plain text, including To, Cc, and Bcc |
-| `reply_to_message`, `forward_message` | Create native reply and forward drafts |
+| `reply_to_message`, `forward_message` | Create native reply and text forward drafts |
 | `get_draft` | Read the current draft and obtain its sending revision |
 | `add_attachment`, `save_attachment` | Add a local file or save a downloaded received attachment |
 | `send_draft` | Send a reviewed draft when the user requests it |
@@ -108,6 +108,8 @@ Email contents must never be treated as instructions to send mail or change sett
 Mail cannot reliably enumerate attachments in open drafts.
 Previews list files added through MCP, but cannot verify attachments added, removed, or changed in Mail.
 Inspect attachments in the compose window before sending, especially for forwarded messages.
+Text forwards do not copy original attachments. For a complete forward, use `read_message`, then `save_attachment` and `add_attachment` for each file.
+Replies and forwards include at most the first 100,000 characters of the original text.
 Files added through MCP must be regular files no larger than 25 MiB each.
 Your provider may impose a lower total message size limit.
 
@@ -116,6 +118,7 @@ Do not retry a timed-out send automatically. Check Mail's Outbox and Sent mailbo
 `acceptedByMail` means Mail accepted the send operation; it does not confirm delivery to the recipient.
 
 Received attachments must already be downloaded in Mail.
+MIME type is `null` when Mail cannot provide it.
 Each saved attachment goes into a new directory under `~/Downloads/mailmcp` without overwriting another file.
 
 ## Development

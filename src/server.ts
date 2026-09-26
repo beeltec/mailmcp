@@ -134,10 +134,10 @@ export async function startServer(): Promise<void> {
   tool('create_draft', 'Create and save a visible plain-text draft. Does not send. Only the configured sender address is used.', {
     accountId, to: addresses.min(1), cc: addresses.default([]), bcc: addresses.default([]), subject, body,
   }, false, async args => create(account(args.accountId), { ...args, kind: 'new' }));
-  tool('reply_to_message', 'Create a native reply draft with quoted text. Review actual recipients before sending. Does not send.', {
+  tool('reply_to_message', 'Create a native reply draft with up to 100,000 characters of original text. Review actual recipients before sending. Does not send.', {
     accountId, ref, body, replyAll: z.boolean().default(false),
   }, false, async args => create(account(args.accountId), { ...args, kind: 'reply' }));
-  tool('forward_message', 'Create a native forward draft. Mail may include original attachments. Inspect the draft in Mail before sending. Does not send.', {
+  tool('forward_message', 'Create a text forward draft with up to 100,000 characters of original text. Original attachments are NOT copied. For a complete forward, use read_message, save_attachment and add_attachment for each original attachment before sending. Does not send.', {
     accountId, ref, to: addresses.min(1), cc: addresses.default([]), bcc: addresses.default([]), body,
   }, false, async args => create(account(args.accountId), { ...args, kind: 'forward' }));
   tool('get_draft', 'Read the current draft body and all recipients. Returns the revision required for sending.', { draftToken }, true,

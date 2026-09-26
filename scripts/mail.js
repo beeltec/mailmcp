@@ -140,7 +140,9 @@ function dispatch(mail, request) {
         body: body.slice(args.bodyOffset, args.bodyOffset + args.bodyLimit),
         nextBodyOffset: args.bodyOffset + args.bodyLimit < body.length ? args.bodyOffset + args.bodyLimit : null,
         attachments: attachments.map(function (attachment) {
-          return { id: attachment.id(), name: attachment.name(), mimeType: attachment.mimeType(),
+          var mimeType = null;
+          try { mimeType = attachment.mimeType(); } catch (_) {}
+          return { id: attachment.id(), name: attachment.name(), mimeType: mimeType,
             size: attachment.fileSize(), downloaded: attachment.downloaded() };
         }),
       });
@@ -179,12 +181,16 @@ function dispatch(mail, request) {
         draft = args.kind === 'reply'
           ? mail.reply(original, { openingWindow: false, replyToAll: args.replyAll })
           : mail.forward(original, { openingWindow: false });
-        draft.sender = request.account.email;
-        draft.content = args.body + '\n\n' + draft.content();
+        draft.properties = { sender: request.account.email,
+          content: args.body + '\n\nFrom: ' + original.sender() + '\nSubject: ' + original.subject()
+            + '\n\n' + original.content().slice(0, 100000) };
         if (args.kind === 'forward') setRecipients(mail, draft, args);
         draft.visible = true;
       }
       mail.save(draft);
+      if (normalizedBody(draft.content()).indexOf(normalizedBody(args.body)) !== 0) {
+        throw new Error('Mail did not retain the draft body. Inspect the draft in Mail. It was not sent.');
+      }
       return draftInfo(draft);
     }
     case 'get_draft':
