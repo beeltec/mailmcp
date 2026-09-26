@@ -13,8 +13,10 @@ export async function callMail(
   operation: string,
   args: object = {},
   account?: AccountConfig,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   if (process.platform !== 'darwin') throw new Error('mailmcp requires macOS and Apple Mail.');
+  signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
     const child = spawn('/usr/bin/osascript', ['-l', 'JavaScript', script], { stdio: ['pipe', 'pipe', 'pipe'] });
     const chunks: Buffer[] = [];
@@ -24,12 +26,16 @@ export async function callMail(
     const fail = (error: Error) => {
       if (failed) return;
       failed = true;
+      clearTimeout(timer);
       child.kill('SIGKILL');
       reject(error);
     };
     const timer = setTimeout(() => fail(new Error(
       'Mail timed out. The action may have completed. Inspect Mail before retrying a write or send.',
     )), 45_000);
+    const abort = () => fail(new Error('Request cancelled. An in-flight Mail action may have completed. Inspect Mail before retrying.'));
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
     child.stdout.on('data', (chunk: Buffer) => {
       bytes += chunk.length;
       if (bytes > 4 * 1024 * 1024) fail(new Error('Mail response exceeded the size limit.'));
@@ -40,6 +46,7 @@ export async function callMail(
     child.stdin.on('error', fail);
     child.on('close', code => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
       if (failed) return;
       if (code !== 0) {
         reject(new Error(`Mail automation failed (${code}). Check macOS Automation permissions. ${diagnostic}`));
@@ -51,6 +58,6 @@ export async function callMail(
         else reject(new Error(result.error));
       } catch (error) { reject(error); }
     });
-    child.stdin.end(JSON.stringify({ operation, args, account }));
+    if (!failed) child.stdin.end(JSON.stringify({ operation, args, account }));
   });
 }

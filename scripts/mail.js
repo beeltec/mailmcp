@@ -21,6 +21,15 @@ function resolveAccount(mail, config) {
   return account;
 }
 
+function verifySender(mail, config) {
+  var owners = mail.accounts().filter(function (account) {
+    return account.emailAddresses().some(function (email) { return email.toLowerCase() === config.email.toLowerCase(); });
+  });
+  if (owners.length !== 1 || owners[0].id() !== config.id) {
+    throw new Error('Sender address is shared by multiple Mail accounts. Configure a unique sender address before composing or sending.');
+  }
+}
+
 function resolveMailbox(account, path) {
   var parent = account;
   for (var i = 0; i < path.length; i++) {
@@ -109,6 +118,9 @@ function dispatch(mail, request) {
     });
   }
   var account = resolveAccount(mail, request.account);
+  if (['create_draft', 'get_draft', 'add_attachment', 'send_draft'].indexOf(request.operation) !== -1) {
+    verifySender(mail, request.account);
+  }
   switch (request.operation) {
     case 'account_info':
       return { id: account.id(), name: account.name(), email: request.account.email, trash: request.account.trash };
@@ -117,10 +129,11 @@ function dispatch(mail, request) {
     case 'search_messages': {
       var mailbox = resolveMailbox(account, args.mailbox);
       var total = mailbox.messages.length;
-      var end = Math.min(total, args.offset + args.scanLimit);
+      var start = Math.min(total, args.offset);
+      var end = Math.min(total, start + args.scanLimit);
       var results = [];
       var i;
-      for (i = args.offset; i < end && results.length < args.limit; i++) {
+      for (i = start; i < end && results.length < args.limit; i++) {
         var message = mailbox.messages[i];
         if (args.unread !== undefined && message.readStatus() === args.unread) continue;
         if (args.subject && message.subject().toLowerCase().indexOf(args.subject.toLowerCase()) === -1) continue;
@@ -128,7 +141,7 @@ function dispatch(mail, request) {
         if (args.since && message.dateReceived() < new Date(args.since)) continue;
         results.push(summary(message, args.mailbox));
       }
-      return { messages: results, scanned: i - args.offset, total: total, nextOffset: i < total ? i : null,
+      return { messages: results, scanned: i - start, total: total, nextOffset: i < total ? i : null,
         note: 'Scans Mail storage order, not guaranteed date order. Offsets can shift when mail changes.' };
     }
     case 'read_message': {

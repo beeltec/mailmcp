@@ -59,6 +59,7 @@ Set `MAILMCP_CONFIG` to an absolute path to use a different file.
 Restart the server to apply changes. Removed accounts remain accessible to an already running connection until it restarts.
 Account identifiers and sender addresses are checked against Mail on every operation.
 Missing, disabled, or changed accounts fail without granting access to other accounts.
+Composing and sending also require a sender address that belongs to exactly one Mail account, including accounts outside the allowlist.
 
 Mailbox paths contain exact names from `list_mailboxes`, not necessarily the translated names shown in Mail's sidebar.
 For nested mailboxes, use one name per path segment.
@@ -114,6 +115,7 @@ Files added through MCP must be regular files no larger than 25 MiB each.
 Your provider may impose a lower total message size limit.
 
 Once a send is attempted, its handle is consumed even if the outcome is uncertain.
+An uncertain attachment write also revokes the draft handle. Inspect and finish that draft in Mail.
 Do not retry a timed-out send automatically. Check Mail's Outbox and Sent mailboxes first.
 `acceptedByMail` means Mail accepted the send operation; it does not confirm delivery to the recipient.
 
@@ -135,5 +137,6 @@ Use a disposable self-addressed message when checking writes. Do not use existin
 
 The server runs fixed scripts. Arguments are passed as JSON on stdin, never interpolated into executable source or a shell command.
 Calls are serialized. Each Mail operation has a 45-second timeout and a response size limit.
+Cancelled queued requests are skipped. Cancelling an active request stops its script, but cannot undo an Apple Event already received by Mail.
 Timeouts can leave an action completed in Mail; inspect the result before retrying a write.
 Email content is returned to the connected MCP client. Its model provider's data handling still applies.
