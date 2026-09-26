@@ -70,7 +70,10 @@ function mailboxList(account) {
   var result = boxes.map(function (box) {
     var path = actualPath(box, account.id());
     var entry = { path: path, unread: box.unreadCount(), available: true, messageCount: null };
-    try { entry.messageCount = box.messages.id().length; }
+    try {
+      entry.messageCount = box.messages.length;
+      if (entry.messageCount === 0) box.messages.id();
+    }
     catch (_) { entry.available = false; entry.reason = 'Mail cannot access this mailbox. Check it in Mail before retrying.'; }
     return entry;
   });
@@ -147,7 +150,7 @@ function readMessage(account, args) {
   return Object.assign(summary(message, args.ref.mailbox), {
     to: recipients(message.toRecipients), cc: recipients(message.ccRecipients),
     body: body.slice(args.bodyOffset, args.bodyOffset + args.bodyLimit),
-    bodyLength: body.length,
+    bodyLength: body.length, bodyLimit: args.bodyLimit,
     nextBodyOffset: args.bodyOffset + args.bodyLimit < body.length ? args.bodyOffset + args.bodyLimit : null,
     attachmentCoverage: attachments.length ? 'not_inspected' : 'no_attachments',
     attachments: attachments.map(function (attachment) {
@@ -238,7 +241,7 @@ function dispatch(mail, request) {
         results.push(value);
       }
       return { messages: results, processed: index, remaining: args.messages.slice(index),
-        bodyCharacters: used, attachmentCoverage: 'Attachment metadata only. Inspect relevant files before claiming complete coverage.',
+        bodyCharacters: used, bodyBudget: args.bodyBudget, bodyLimit: args.bodyLimit, attachmentCoverage: 'Attachment metadata only. Inspect relevant files before claiming complete coverage.',
         note: 'Read every nextBodyOffset and remaining entry. Do not slice bodies or combine multiple batches in one output.' };
     }
     case 'set_message_state': {
