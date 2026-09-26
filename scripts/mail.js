@@ -99,10 +99,18 @@ function recipients(collection) {
 
 function searchMessages(mailbox, args) {
   var started = Date.now();
-  var ids = mailbox.messages.id();
-  var dates = mailbox.messages.dateReceived();
   var since = args.since ? new Date(args.since).getTime() : null;
   var before = args.before ? new Date(args.before).getTime() : null;
+  if (since !== null || before !== null) {
+    var previewDates = mailbox.messages.dateReceived();
+    if (!previewDates.some(function (date) {
+      var value = date.getTime();
+      return (since === null || value >= since) && (before === null || value < before);
+    })) return { messages: [], total: previewDates.length, dateCandidates: 0, scanned: 0, offset: args.offset,
+      nextOffset: null, complete: true, timings: { datesMs: Date.now() - started, filterMs: 0 } };
+  }
+  var ids = mailbox.messages.id();
+  var dates = mailbox.messages.dateReceived();
   if (dates.length !== ids.length) throw new Error('MAILBOX_CHANGED: Mailbox changed. Restart from offset 0.');
   var candidates = [];
   for (var i = 0; i < ids.length; i++) {

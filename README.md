@@ -107,7 +107,8 @@ Microsoft also documents [Deleted Items and Trash](https://support.microsoft.com
 | `add_attachment`, `save_attachment` | Add a local file or save a downloaded received attachment |
 | `send_draft` | Send a reviewed draft when the user requests it |
 
-Search reads IDs and received dates in bulk, then checks only date candidates.
+Search checks received dates first and skips ID reads when the date range is empty.
+For nonempty ranges, it reads IDs and dates together again and checks only date candidates.
 Recipient addresses are fetched only after the date, sender, subject, and unread filters pass.
 Each page examines at most 100 candidates or five seconds of filtering, and returns at most 50 results.
 One Apple Event can exceed the filtering budget; the request deadline remains the final bound.
