@@ -7,7 +7,7 @@ import { selectTrash } from './trash.js';
 
 const accountsSchema = z.array(z.object({ id: z.string(), name: z.string(), emails: z.array(z.string()) }));
 const setupMailboxesSchema = z.object({
-  mailboxes: z.array(z.object({ path: mailboxPath })),
+  mailboxes: z.array(z.object({ path: mailboxPath, ambiguous: z.boolean() })),
   trashNames: z.array(z.string()),
 });
 
@@ -33,7 +33,7 @@ export async function setup(): Promise<void> {
       if (!email || !account.emails.includes(email)) throw new Error('Select an email configured in this account.');
       const partial = { id: account.id, email, trash: ['pending'] };
       const { mailboxes, trashNames } = setupMailboxesSchema.parse(await callMail('setup_mailboxes', {}, partial));
-      const trash = await selectTrash(account.name, mailboxes, trashNames, terminal);
+      const trash = await selectTrash(account.name, mailboxes.filter(mailbox => !mailbox.ambiguous), trashNames, terminal);
       selected.push({ id: account.id, email, trash });
     }
     await saveConfig({ accounts: selected });
