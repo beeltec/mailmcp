@@ -173,6 +173,17 @@ function dispatch(mail, request) {
       return { id: account.id(), name: account.name(), email: request.account.email, trash: request.account.trash };
     case 'list_mailboxes':
       return mailboxList(account);
+    case 'setup_mailboxes': {
+      var mailboxes = mailboxList(account);
+      var trashNames = [];
+      try {
+        var trashChildren = mail.trashMailbox.mailboxes();
+        for (var i = 0; i < trashChildren.length; i++) {
+          if (trashChildren[i].account().id() === request.account.id) trashNames.push(trashChildren[i].name());
+        }
+      } catch (_) { trashNames = []; }
+      return { mailboxes: mailboxes, trashNames: trashNames };
+    }
     case 'search_messages': {
       var mailbox = resolveMailbox(account, args.mailbox);
       return searchMessages(mailbox, args);
