@@ -70,14 +70,12 @@ function mailboxList(account) {
   if (boxes.length > 1000) throw new Error('Account has more than 1000 mailboxes.');
   var result = boxes.map(function (box) {
     var path = actualPath(box, account.id());
-    var entry = { path: path, unread: box.unreadCount(), available: true, messageCount: null };
-    try { entry.messageCount = box.messages.id().length; }
-    catch (_) { entry.available = false; entry.reason = 'Mail cannot access this mailbox. Check it in Mail before retrying.'; }
+    var entry = { path: path, unread: box.unreadCount(), ambiguous: false };
     return entry;
   });
   result.forEach(function (entry) {
     if (result.filter(function (other) { return JSON.stringify(other.path) === JSON.stringify(entry.path); }).length > 1) {
-      entry.available = false;
+      entry.ambiguous = true;
       entry.reason = 'Mail exposes more than one mailbox at this exact path.';
     }
   });

@@ -127,8 +127,9 @@ Version 0.4 changes `offset` to count date candidates, not matching messages. Re
 The old `scanLimit` argument remains accepted and ignored.
 
 Mailbox discovery uses each mailbox's actual container chain. Mail's account collection also includes nested folders.
-Copy canonical paths from `list_mailboxes`. Skip entries with `available: false` and report their reason.
-`messageCount` allows callers to skip empty folders. Counts use bulk IDs because native counts were substantially slower in live Mail. The server never selects the first of several ambiguous folders.
+Copy canonical paths from `list_mailboxes`. Skip entries with `ambiguous: true` and report their reason.
+Discovery reads no message collections. Search checks message access and reports per-folder errors.
+The server never selects the first of several ambiguous folders.
 
 ### Mail analysis workflow
 
