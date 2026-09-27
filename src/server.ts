@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { callMail } from './bridge.js';
 import { loadConfig, mailboxPath, type AccountConfig } from './config.js';
 import { MailTransport } from './transport.js';
+import type { ToolName } from './tools.js';
 
 const accountId = z.string().min(1).describe('An account ID returned by list_accounts.');
 const ref = z.strictObject({
@@ -72,9 +73,10 @@ export async function startServer(): Promise<void> {
   }
 
   function tool<S extends z.ZodRawShape>(
-    name: string, description: string, shape: S, readOnly: boolean,
+    name: 'list_accounts' | ToolName, description: string, shape: S, readOnly: boolean,
     handler: (args: z.output<z.ZodObject<S>>, signal: AbortSignal) => Promise<unknown>,
   ): void {
+    if (name !== 'list_accounts' && config.tools && !config.tools.includes(name)) return;
     const inputSchema: z.ZodObject<z.ZodRawShape> = z.object(shape);
     server.registerTool(name, {
       description, inputSchema,
