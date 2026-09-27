@@ -22,8 +22,19 @@ Setup lets you select:
 1. The accounts the server can access
 2. The Trash mailbox of each account (detected automatically when possible)
 3. The tools the server offers (destructive tools are off by default)
-4. The harnesses to install the server in: Claude Code, Codex, Cursor, Gemini CLI, opencode, and pi
+4. The scope: user (all projects) or project (the current directory)
+5. The harnesses to install the server in: Claude Code, Codex, Cursor, Gemini CLI, opencode, and pi
 
+| Harness | User scope | Project scope |
+| --- | --- | --- |
+| Claude Code | `~/.claude.json` | `.mcp.json` |
+| Codex | `~/.codex/config.toml` | `.codex/config.toml` (trusted projects only) |
+| Cursor | `~/.cursor/mcp.json` | `.cursor/mcp.json` |
+| Gemini CLI | `~/.gemini/settings.json` | `.gemini/settings.json` |
+| opencode | `~/.config/opencode/opencode.json` | `opencode.json` |
+| pi (with pi-mcp-adapter) | `~/.config/mcp/mcp.json` | `.mcp.json` |
+
+Run setup in the project directory to use project scope. Project files contain absolute paths of your computer.
 Run `mailmcp setup` again to change these settings. Restart the harness after changes.
 
 To add the server manually:
