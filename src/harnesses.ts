@@ -20,7 +20,9 @@ export type Harness = {
   uninstall(): Promise<void>;
 };
 export type HarnessStatus = { harness: Harness; installed: boolean; current: boolean; error?: string };
-type Detectable = Omit<Harness, 'locations'> & { available(): Promise<boolean>; locations(): Promise<string[]>; entries(): Promise<unknown[]> };
+type Detectable = Omit<Harness, 'locations'> & {
+  available(): Promise<boolean>; locations(): Promise<string[]>; entries(): Promise<unknown[]>; config?: string;
+};
 
 const name = 'mail';
 const command = [process.execPath, fileURLToPath(new URL('./cli.js', import.meta.url))];
@@ -66,15 +68,15 @@ function edit(text: string, base: string[], edits: Edit[]): string {
     applyEdits(result, modify(result, [...base, ...path], value, { formattingOptions: { insertSpaces: true, tabSize: 2 } })), text);
 }
 
-function current(entry: unknown): boolean {
+function current(entry: unknown, config = env?.MAILMCP_CONFIG): boolean {
   const { argv, env: variables } = launch(entry);
-  return JSON.stringify(argv) === JSON.stringify(command) && variables.MAILMCP_CONFIG === env?.MAILMCP_CONFIG;
+  return JSON.stringify(argv) === JSON.stringify(command) && variables.MAILMCP_CONFIG === config;
 }
 
 async function check(harness: Detectable): Promise<{ installed: boolean; current: boolean }> {
   const entries = await harness.entries();
   if (!entries.every(owned)) throw new Error(`another MCP server uses the name ${name}`);
-  return { installed: entries.length > 0, current: entries.every(current) };
+  return { installed: entries.length > 0, current: entries.every(entry => current(entry, harness.config)) };
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -169,7 +171,9 @@ function codexServers(config: Record<string, unknown>, path: string): Record<str
 }
 
 // Codex has no project scope option, so edit the project file directly.
+// Codex merges the project entry with the user entry, so always set the configuration path.
 function codexProject(path: string): Detectable {
+  const configFile = configPath();
   async function read(): Promise<{ text: string; config: Record<string, unknown> }> {
     const text = await readText(path) ?? '';
     try {
@@ -190,7 +194,7 @@ function codexProject(path: string): Detectable {
     if (!remove) {
       const { env: variables, ...entry } = jsonObject.parse(codexServers(config, path)[name] ?? {});
       const { MAILMCP_CONFIG: _config, ...kept } = strings.parse(variables) ?? {};
-      const environment = { ...kept, ...env };
+      const environment = { ...kept, MAILMCP_CONFIG: configFile };
       const server = { ...entry, command: command[0], args: command.slice(1), ...(Object.keys(environment).length && { env: environment }) };
       updated = { ...rest, mcp_servers: { ...codexServers(rest, path), [name]: server } };
     }
@@ -199,7 +203,7 @@ function codexProject(path: string): Detectable {
       patched = patchToml(text, updated);
       const result = jsonObject.parse(parseToml(patched));
       const entry = codexServers(result, path)[name];
-      if (!isDeepStrictEqual(others(result), rest) || (remove ? entry !== undefined : !current(entry))) throw new Error();
+      if (!isDeepStrictEqual(others(result), rest) || (remove ? entry !== undefined : !current(entry, configFile))) throw new Error();
     } catch {
       throw new Error(`Cannot update ${path}. Change it manually.`);
     }
@@ -208,6 +212,7 @@ function codexProject(path: string): Detectable {
   return {
     label: 'Codex',
     hint: 'trusted projects only',
+    config: configFile,
     available: () => commandExists('codex'),
     locations: async () => [path],
     entries: async () => {
