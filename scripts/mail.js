@@ -1,5 +1,7 @@
 ObjC.import('Foundation');
 
+var mailboxLimit = 1000;
+
 function run() {
   try {
     var input = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile;
@@ -67,7 +69,7 @@ function resolveMessage(account, ref) {
 
 function mailboxList(account) {
   var boxes = account.mailboxes();
-  if (boxes.length > 1000) throw new Error('Account has more than 1000 mailboxes.');
+  if (boxes.length > mailboxLimit) throw new Error('Account has more than ' + mailboxLimit + ' mailboxes.');
   var result = boxes.map(function (box) {
     var path = actualPath(box, account.id());
     var entry = { path: path, unread: box.unreadCount(), ambiguous: false };
@@ -196,6 +198,162 @@ function setRecipients(mail, draft, args) {
   });
 }
 
+function pathStartsWith(path, prefix) {
+  return prefix.length <= path.length && prefix.every(function (name, i) { return name === path[i]; });
+}
+
+function validateMailboxName(name) {
+  if (!name || name !== name.trim() || name === '.' || name === '..' || /[\/\\\x00-\x1f\x7f]/.test(name)) {
+    throw new Error('INVALID_MAILBOX_NAME: Use a nonblank name without surrounding spaces, slashes, or control characters.');
+  }
+}
+
+function requireNewPath(account, path, creating) {
+  path.forEach(validateMailboxName);
+  var key = JSON.stringify(path).normalize('NFC').toLowerCase();
+  var entries = mailboxList(account);
+  if (creating && entries.length >= mailboxLimit) throw new Error('MAILBOX_LIMIT: Remove an empty custom folder before creating another.');
+  if (entries.some(function (entry) { return JSON.stringify(entry.path).normalize('NFC').toLowerCase() === key; })) {
+    throw new Error('MAILBOX_EXISTS: A mailbox already uses this path.');
+  }
+}
+
+function waitForMailbox(account, path) {
+  for (var attempt = 0; attempt < 15; attempt++) {
+    try { return resolveMailbox(account, path); }
+    catch (error) {
+      if (String(error.message).indexOf('MAILBOX_UNAVAILABLE:') !== 0) throw error;
+      delay(0.2);
+    }
+  }
+  throw new Error('MAILBOX_CHANGED: Mail has not published the expected path. Inspect folders before retrying the write.');
+}
+
+function protectMailbox(mail, account, config, path) {
+  var protectedPaths = [config.trash];
+  var names = ['inbox', 'archive', 'archives', 'archiv', 'notes'];
+  ['inbox', 'draftsMailbox', 'sentMailbox', 'trashMailbox', 'junkMailbox', 'outbox'].forEach(function (role) {
+    var children;
+    try { children = mail[role].mailboxes(); }
+    catch (_) { throw new Error('MAILBOX_PROTECTED: Cannot verify Mail system folders. Inspect Mail before changing folders.'); }
+    children.forEach(function (box) {
+      var owner = box.account();
+      if (owner && owner.id() === account.id()) protectedPaths.push(actualPath(box, account.id()));
+    });
+  });
+  mailboxList(account).forEach(function (entry) {
+    var conventionalLocation = entry.path.length === 1 || (entry.path.length === 2 &&
+      ['INBOX', '[Gmail]', '[Google Mail]'].indexOf(entry.path[0]) !== -1);
+    if (conventionalLocation && names.indexOf(entry.path[entry.path.length - 1].toLowerCase()) !== -1) protectedPaths.push(entry.path);
+  });
+  if (protectedPaths.some(function (protectedPath) { return pathStartsWith(protectedPath, path); })) {
+    throw new Error('MAILBOX_PROTECTED: System folders, configured Trash, and their parents cannot be renamed or deleted.');
+  }
+}
+
+function elementWithIdentifier(elements, identifier) {
+  var matches = elements.filter(function (element) {
+    try { return element.attributes.byName('AXIdentifier').value() === identifier; }
+    catch (_) { return false; }
+  });
+  if (matches.length !== 1) throw new Error('MAILBOX_UI_UNAVAILABLE: Mail control is unavailable: ' + identifier);
+  return matches[0];
+}
+
+function requireEmptyMailbox(account, path) {
+  var target = resolveMailbox(account, path);
+  if (mailboxList(account).some(function (entry) {
+    return entry.path.length > path.length && pathStartsWith(entry.path, path);
+  }) || target.messages.length !== 0) {
+    throw new Error('MAILBOX_NOT_EMPTY: Move messages and remove child folders first. No folder was deleted.');
+  }
+  return target;
+}
+
+function deletionDialog(mail, process, viewer, account, path, cancelOnly) {
+  var selected = viewer.selectedMailboxes();
+  var window = elementWithIdentifier(process.windows(), 'Mail.messageViewer.window.' + viewer.id());
+  if ((!cancelOnly && (mail.windows[0].id() !== viewer.window.id() ||
+      process.windows[0].attributes.byName('AXIdentifier').value() !== 'Mail.messageViewer.window.' + viewer.id())) ||
+      selected.length !== 1 || selected[0].account().id() !== account.id() ||
+      JSON.stringify(actualPath(selected[0], account.id())) !== JSON.stringify(path)) {
+    throw new Error('MAILBOX_UI_UNAVAILABLE: Mail selection or dialog owner changed. No deletion was confirmed.');
+  }
+  if (window.sheets.length !== 1) throw new Error('MAILBOX_UI_UNAVAILABLE: Expected deletion dialog is missing.');
+  var sheet = window.sheets[0];
+  var texts = sheet.staticTexts.value();
+  var alerts = ObjC.deepUnwrap($.NSDictionary.dictionaryWithContentsOfFile('/System/Applications/Mail.app/Contents/Resources/Alerts.loctable'));
+  var labels = ObjC.deepUnwrap($.NSDictionary.dictionaryWithContentsOfFile('/System/Applications/Mail.app/Contents/Resources/Localizable.loctable'));
+  var remove = elementWithIdentifier(sheet.buttons(), 'action-button-1');
+  var cancel = elementWithIdentifier(sheet.buttons(), 'action-button-2');
+  var matches = alerts && labels && Object.keys(alerts).some(function (language) {
+    var strings = alerts[language];
+    var buttons = labels[language];
+    var format = strings['DeleteMailboxQuestionFormat%1$@'];
+    return buttons && typeof format === 'string' &&
+      texts.length === 2 && texts.indexOf(format.replace('%1$@', function () { return path[path.length - 1]; })) !== -1 &&
+      (texts.indexOf(strings.DeleteMailboxAlertMessageFormat) !== -1 ||
+        (cancelOnly && texts.indexOf(strings.DeleteMailboxAndSubmailboxesAlertMessageFormat) !== -1)) &&
+      remove.name() === buttons.DeleteButton && cancel.name() === buttons.ToolbarCancel;
+  });
+  if (!matches || sheet.buttons.length !== 2) throw new Error('MAILBOX_UI_UNAVAILABLE: Mail dialog is not the exact folder deletion confirmation.');
+  return cancelOnly ? { cancel: cancel } : { remove: remove };
+}
+
+function cancelMailboxDeletion(mail, account, path, windowId) {
+  var viewers = mail.messageViewers().filter(function (viewer) { return viewer.window.id() === windowId; });
+  if (viewers.length !== 1) return { dismissed: false };
+  var process = Application('com.apple.systemevents').processes.byName('Mail');
+  for (var attempt = 0; attempt < 10; attempt++) {
+    try {
+      deletionDialog(mail, process, viewers[0], account, path, true).cancel.click();
+      return { dismissed: true };
+    } catch (_) { delay(0.1); }
+  }
+  return { dismissed: false };
+}
+
+function deleteEmptyMailbox(mail, account, config, path) {
+  var process = Application('com.apple.systemevents').processes.byName('Mail');
+  if (mail.messageViewers.length === 0) throw new Error('MAILBOX_UI_UNAVAILABLE: Open a Mail viewer window first.');
+  if (process.windows().some(function (window) { return window.sheets.length !== 0; })) {
+    throw new Error('MAILBOX_UI_UNAVAILABLE: Close existing Mail dialogs before deleting a folder.');
+  }
+  var viewer = mail.messageViewers[0];
+  mail.activate();
+  viewer.window.miniaturized = false;
+  viewer.window.index = 1;
+  viewer.selectedMailboxes = requireEmptyMailbox(account, path);
+  var menu = elementWithIdentifier(process.menuBars[0].menuBarItems(), 'Mail.menuBar.mailboxMenu');
+  var command = elementWithIdentifier(menu.menus[0].menuItems(), 'Mail.menuBar.mailboxMenu.delete');
+  if (!command.enabled()) throw new Error('MAILBOX_UI_UNAVAILABLE: Mail cannot delete this folder.');
+  var selected = viewer.selectedMailboxes();
+  if (mail.windows[0].id() !== viewer.window.id() || selected.length !== 1 ||
+      selected[0].account().id() !== account.id() || JSON.stringify(actualPath(selected[0], account.id())) !== JSON.stringify(path) ||
+      process.windows().some(function (window) { return window.sheets.length !== 0; })) {
+    throw new Error('MAILBOX_UI_UNAVAILABLE: Mail selection changed. No deletion was started.');
+  }
+  var windowId = viewer.window.id();
+  var marker = $('MAILMCP_DELETE_WINDOW:' + windowId + '\n').dataUsingEncoding($.NSUTF8StringEncoding);
+  $.NSFileHandle.fileHandleWithStandardError.writeData(marker);
+  try {
+    command.click();
+    for (var attempt = 0; attempt < 10 && process.windows[0].sheets.length === 0; attempt++) delay(0.1);
+    deletionDialog(mail, process, viewer, account, path);
+    protectMailbox(mail, account, config, path);
+    requireEmptyMailbox(account, path);
+    deletionDialog(mail, process, viewer, account, path).remove.click();
+  } catch (error) {
+    cancelMailboxDeletion(mail, account, path, windowId);
+    try { requireEmptyMailbox(account, path); }
+    catch (stateError) {
+      if (String(stateError.message).indexOf('MAILBOX_NOT_EMPTY:') === 0) throw stateError;
+    }
+    if (String(error.message).indexOf('MAILBOX_') === 0) throw error;
+    throw new Error('MAILBOX_UI_UNAVAILABLE: Mail controls changed or became unavailable. Inspect the folder before retrying. ' + error.message);
+  }
+}
+
 function dispatch(mail, request) {
   var args = request.args;
   if (request.operation === 'discover_accounts') {
@@ -212,6 +370,45 @@ function dispatch(mail, request) {
       return { id: account.id(), name: account.name(), email: request.account.email, trash: request.account.trash };
     case 'list_mailboxes':
       return mailboxList(account);
+    case 'cancel_mailbox_deletion':
+      return cancelMailboxDeletion(mail, account, args.mailbox, args.windowId);
+    case 'get_mailbox': {
+      var box = resolveMailbox(account, args.mailbox);
+      return { path: args.mailbox, unread: box.unreadCount(), messageCount: box.messages.length,
+        children: mailboxList(account).filter(function (entry) {
+          return entry.path.length === args.mailbox.length + 1 && pathStartsWith(entry.path, args.mailbox);
+        }).map(function (entry) { return entry.path; }) };
+    }
+    case 'create_mailbox': {
+      requireNewPath(account, args.mailbox, true);
+      if (args.mailbox.length > 1) resolveMailbox(account, args.mailbox.slice(0, -1));
+      account.mailboxes.push(mail.Mailbox({ name: args.mailbox.join('/') }));
+      waitForMailbox(account, args.mailbox);
+      return { created: true, path: args.mailbox };
+    }
+    case 'rename_mailbox': {
+      var source = resolveMailbox(account, args.mailbox);
+      protectMailbox(mail, account, request.account, args.mailbox);
+      validateMailboxName(args.name);
+      var destination = args.mailbox.slice(0, -1).concat([args.name]);
+      requireNewPath(account, destination);
+      source.name = args.name;
+      waitForMailbox(account, destination);
+      return { renamed: true, path: destination, previousPath: args.mailbox,
+        note: 'Refresh mailbox discovery and search renamed folders and their children for fresh message references.' };
+    }
+    case 'delete_mailbox': {
+      resolveMailbox(account, args.mailbox);
+      protectMailbox(mail, account, request.account, args.mailbox);
+      deleteEmptyMailbox(mail, account, request.account, args.mailbox);
+      for (var attempt = 0; attempt < 15; attempt++) {
+        if (!mailboxList(account).some(function (entry) { return JSON.stringify(entry.path) === JSON.stringify(args.mailbox); })) {
+          return { deleted: true, path: args.mailbox };
+        }
+        delay(0.2);
+      }
+      throw new Error('MAILBOX_CHANGED: Mail still lists the folder. Inspect it before retrying deletion.');
+    }
     case 'setup_mailboxes': {
       var mailboxes = mailboxList(account);
       var trashNames = [];

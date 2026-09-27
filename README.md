@@ -10,7 +10,8 @@ It uses the accounts already configured in Mail. It does not need mail passwords
 - macOS Automation permission for the process that runs the server to control Mail.
 
 Mail may open composer windows during draft operations. Run this server in your logged-in desktop session.
-It does not need Accessibility or Full Disk Access, and does not read Mail's private database.
+Folder deletion also needs Automation permission for System Events and Accessibility permission for the process running the server.
+Other operations do not need Accessibility. The server does not need Full Disk Access or read Mail's private database.
 
 ## Install from this repository
 
@@ -24,19 +25,25 @@ mailmcp setup
 The repository is currently private. The package is prepared for npm distribution but has not been published.
 `npm pack` creates an installable archive. Once published, users can install a pinned package version through npm.
 
-Setup is an interactive terminal wizard. Use the arrow keys to move, Space to select, and Enter to confirm.
-Setup shows your current choices as defaults.
+Setup is an interactive terminal program. Use the arrow keys to move, Space to select, and Enter to confirm.
+The first setup runs these steps in sequence:
 
 1. Select the accounts to allow. Press `A` to select all accounts.
    Accounts with multiple sender addresses ask which address to use.
 2. Setup detects Trash mailboxes automatically.
    It asks you to select a Trash mailbox only when it cannot identify one unambiguously.
 3. Select the tools the server offers. `list_accounts` is always on.
+   Destructive tools (`trash_message` and `delete_mailbox`) are not selected by default.
 4. Select the harnesses that use the server. Setup shows where the server is already installed.
    Select a harness to install the server. Unselect it to uninstall the server after a confirmation.
 
+When a valid configuration exists, setup shows a menu instead.
+Select accounts and Trash mailboxes, tools, or harnesses to change only that part. Your current choices are the defaults.
+Setup saves each change immediately and then shows the menu again. Select Exit to finish.
+
 Only setup can discover unconfigured accounts. MCP tools cannot change the allowlist.
-Press Ctrl+C to cancel. Setup saves the configuration before the harness step.
+Press Ctrl+C or Esc to cancel. In the menu, this returns to the menu without changes.
+The first setup saves the configuration before the harness step.
 
 ## Connect harnesses
 
@@ -69,7 +76,7 @@ codex mcp add mail -- /absolute/path/to/node /absolute/path/to/mailmcp/dist/cli.
 
 ## Change allowed accounts
 
-Run `mailmcp setup` again. It replaces the account list only after all selections are valid.
+Run `mailmcp setup` again and select the accounts in the menu. It replaces the account list only after all selections are valid.
 You can also edit `~/.config/mailmcp/config.json`:
 
 ```json
@@ -95,7 +102,7 @@ Composing and sending also require a sender address that belongs to exactly one 
 
 Mailbox paths contain exact names from `list_mailboxes`, not necessarily the translated names shown in Mail's sidebar.
 For nested mailboxes, use one name per path segment.
-The server uses your Trash mapping and never calls Mail's delete command.
+Message deletion uses your Trash mapping. Folder deletion uses Mail's menu controls only for empty custom folders without children.
 Mail and your provider can still expire messages in Trash according to their own settings.
 
 ### Automatic Trash detection
@@ -126,6 +133,7 @@ Microsoft also documents [Deleted Items and Trash](https://support.microsoft.com
 | Tools | Purpose |
 | --- | --- |
 | `list_accounts`, `list_mailboxes` | Discover allowed accounts and their existing mailboxes |
+| `get_mailbox`, `create_mailbox`, `rename_mailbox`, `delete_mailbox` | Inspect, create, rename, and delete empty custom folders |
 | `search_messages`, `search_mailboxes` | Search a mailbox by subject, sender, recipient, received date, and unread state |
 | `read_message`, `read_messages` | Read bounded body pages or batches and inspect attachment metadata |
 | `set_message_state` | Set read state or flag color |
@@ -159,6 +167,28 @@ Mailbox discovery uses each mailbox's actual container chain. Mail's account col
 Copy canonical paths from `list_mailboxes`. Skip entries with `ambiguous: true` and report their reason.
 Discovery reads no message collections. Search checks message access and reports per-folder errors.
 The server never selects the first of several ambiguous folders.
+
+### Folder management
+
+Use `create_mailbox` with a full path, such as `["Projects", "Invoices"]`. The parent must already exist.
+`get_mailbox` returns message and unread counts plus direct child paths.
+`rename_mailbox` changes the final name, preserving messages and children. It does not move folders between parents.
+Refresh discovery and message references after renaming a folder or its parent.
+Creation stops at the supported limit of 1,000 mailboxes per account.
+Names cannot contain slashes, control characters, or surrounding spaces. Existing paths are rejected, ignoring case and Unicode composition.
+Assigned system folders, configured Trash, and their parents cannot be renamed or deleted.
+Common Archive/Notes folders are also protected at account root or under INBOX, [Gmail], or [Google Mail].
+Custom folders elsewhere can share a system folder’s name.
+`delete_mailbox` uses Mail’s Delete Mailbox menu because its scripting delete command fails for server folders.
+It checks the selected account, exact path, empty state, viewer identifier, and exact localized confirmation before confirming.
+Confirmation text comes from the installed Mail app’s language resources. Unsupported resources or controls stop deletion.
+Failures and cancellation attempt to dismiss only the matching, operation-owned deletion dialog.
+If Mail is unresponsive, inspect and dismiss the dialog yourself before retrying.
+Allow Accessibility for the server host in macOS System Settings. Keep a Mail viewer open and close other Mail dialogs.
+Do not interact with Mail while deletion runs.
+`delete_mailbox` refuses folders with messages or children. Move mail out and delete empty children first.
+Mail and remote synchronization can change folder contents between checks; pause other sorting activity during deletion.
+After a timeout or uncertain write, inspect the folder before retrying.
 
 ### Mail analysis workflow
 
