@@ -1,9 +1,11 @@
-import { stdin } from 'node:process';
-import { confirm, groupMultiselect, intro, isCancel, log, multiselect, outro, select } from '@clack/prompts';
+import { homedir } from 'node:os';
+import { relative } from 'node:path';
+import { cwd, stdin } from 'node:process';
+import { confirm, groupMultiselect, intro, isCancel, log, multiselect, note, outro, select } from '@clack/prompts';
 import { z } from 'zod';
 import { callMail } from './bridge.js';
 import { configPath, loadConfig, mailboxPath, saveConfig, type AccountConfig, type Config } from './config.js';
-import { harnessStatus } from './harnesses.js';
+import { harnessStatus, type Scope } from './harnesses.js';
 import { destructiveTools, toolGroups, toolNames, type ToolName } from './tools.js';
 import { detectTrash } from './trash.js';
 
@@ -57,7 +59,7 @@ async function menu(config: Config): Promise<void> {
       options: [
         { value: 'accounts', label: 'Accounts and Trash mailboxes', hint: `${config.accounts.length} selected` },
         { value: 'tools', label: 'Tools', hint: `${(config.tools ?? toolNames).length} of ${toolNames.length} enabled` },
-        { value: 'harnesses', label: 'Harnesses' },
+        { value: 'harnesses', label: 'Harnesses', hint: 'user or project scope' },
         { value: 'exit', label: 'Exit' },
       ],
     }));
@@ -129,29 +131,68 @@ async function selectTools(initialValues: ToolName[]): Promise<ToolName[]> {
   }));
 }
 
+function displayPath(path: string, scope: Scope): string {
+  if (scope === 'project') return relative(cwd(), path);
+  const home = homedir();
+  return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+}
+
 async function manageHarnesses(): Promise<void> {
-  const statuses = await withProgress('Looking for harnesses', harnessStatus);
+  const root = cwd();
+  const inHome = root === homedir();
+  const scope = answer(await select<Scope>({
+    message: 'Where do you want to install the MCP server?',
+    options: [
+      { value: 'user', label: 'User', hint: 'all your projects' },
+      { value: 'project', label: 'Project', hint: inHome ? 'not available in your home directory' : displayPath(root, 'user'), disabled: inHome },
+    ],
+  }));
+  const statuses = await withProgress('Looking for harnesses', () => harnessStatus(scope, root));
   if (!statuses.length) {
     log.warn('No supported harness found. Add the MCP server to your client manually.');
     return;
   }
   const chosen = answer(await multiselect({
-    message: 'Install the MCP server in which harnesses? Unselect a harness to uninstall.',
+    message: `Install the MCP server in which harnesses (${scope} scope)? Unselect a harness to uninstall.`,
     options: statuses.map(({ harness, installed, current, error }) => ({
       value: harness.label, label: harness.label, disabled: error !== undefined,
-      hint: [error ?? (installed ? 'installed' : 'not installed'), installed && !current && (harness.update ? 'outdated' : 'outdated, reinstall to update'), harness.hint].filter(Boolean).join(', '),
+      hint: [
+        error ?? (installed ? 'installed' : 'not installed'),
+        installed && !current && (harness.update ? 'outdated' : 'outdated, reinstall to update'),
+        displayPath(harness.location, scope), harness.hint,
+      ].filter(Boolean).join(', '),
     })),
     initialValues: statuses.filter(status => status.installed).map(status => status.harness.label),
     required: false,
   }));
-  const install = statuses.filter(status => !status.error && !status.installed && chosen.includes(status.harness.label));
-  const refresh = statuses.filter(status =>
-    !status.error && status.installed && !status.current && status.harness.update && chosen.includes(status.harness.label));
-  const uninstall = statuses.filter(status => !status.error && status.installed && !chosen.includes(status.harness.label));
-  if (!install.length && !refresh.length && !uninstall.length) return;
-  if (uninstall.length && !answer(await confirm({
-    message: `Uninstall the MCP server from ${uninstall.map(status => status.harness.label).join(', ')}?`,
-  }))) uninstall.length = 0;
+  const selected = statuses.filter(status => !status.error && chosen.includes(status.harness.label));
+  const install = selected.filter(status => !status.installed);
+  const refresh = selected.filter(status => status.installed && !status.current && status.harness.update);
+  const unselected = statuses.filter(status => !status.error && status.installed && !chosen.includes(status.harness.label));
+  const sharing = (location: string) => selected.find(status => status.harness.location === location)?.harness.label;
+  const kept = unselected.filter(status => sharing(status.harness.location));
+  const uninstall = unselected.filter(status => !kept.includes(status));
+  if (!install.length && !refresh.length && !uninstall.length) {
+    for (const { harness } of kept) log.info(`${harness.label} stays installed because ${sharing(harness.location)} uses the same file.`);
+    log.info('Nothing to change.');
+    return;
+  }
+  const rows = [
+    ...install.map(status => ['Install', status.harness.label, displayPath(status.harness.location, scope)]),
+    ...refresh.map(status => ['Update', status.harness.label, displayPath(status.harness.location, scope)]),
+    ...uninstall.map(status => ['Uninstall', status.harness.label, displayPath(status.harness.location, scope)]),
+    ...kept.map(status => ['Keep', status.harness.label, `${sharing(status.harness.location)} uses the same file`]),
+  ];
+  const widths = [0, 1].map(column => Math.max(...rows.map(row => row[column]!.length)));
+  note(rows.map(([action, label, detail]) => `${action!.padEnd(widths[0]!)}  ${label!.padEnd(widths[1]!)}  ${detail}`).join('\n'),
+    `Changes (${scope} scope)`);
+  if (scope === 'project' && install.length + refresh.length) {
+    log.warn('Project files will contain paths on this computer. Other people cannot use them as they are.');
+  }
+  if (!answer(await confirm({ message: 'Apply these changes?' }))) {
+    log.info('Nothing was changed.');
+    return;
+  }
   const failed: string[] = [];
   const wait = () => log.warn('Wait until the harness changes are complete.');
   process.on('SIGINT', wait);
