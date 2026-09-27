@@ -21,7 +21,7 @@ export type Harness = {
 };
 export type HarnessStatus = { harness: Harness; installed: boolean; current: boolean; error?: string };
 type Detectable = Omit<Harness, 'locations'> & {
-  available(): Promise<boolean>; locations(): Promise<string[]>; entries(): Promise<unknown[]>; config?: string;
+  available(): Promise<boolean>; locations(): Promise<string[]>; entries(): Promise<unknown[]>; config?: string | undefined;
 };
 
 const name = 'mail';
@@ -51,15 +51,15 @@ function owned(entry: unknown): boolean {
     value === command[1] || value.endsWith('/mailmcp/dist/cli.js') || basename(value) === 'mailmcp');
 }
 
-function stdioEdits(entry: unknown): Edit[] {
+function stdioEdits(entry: unknown, config = env?.MAILMCP_CONFIG): Edit[] {
   const edits: Edit[] = [[['command'], command[0]], [['args'], command.slice(1)]];
-  if (env || launch(entry).env.MAILMCP_CONFIG !== undefined) edits.push([['env', 'MAILMCP_CONFIG'], env?.MAILMCP_CONFIG]);
+  if (config || launch(entry).env.MAILMCP_CONFIG !== undefined) edits.push([['env', 'MAILMCP_CONFIG'], config]);
   return edits;
 }
 
-function opencodeEdits(entry: unknown): Edit[] {
+function opencodeEdits(entry: unknown, config = env?.MAILMCP_CONFIG): Edit[] {
   const edits: Edit[] = [[['type'], 'local'], [['command'], command]];
-  if (env || launch(entry).env.MAILMCP_CONFIG !== undefined) edits.push([['environment', 'MAILMCP_CONFIG'], env?.MAILMCP_CONFIG]);
+  if (config || launch(entry).env.MAILMCP_CONFIG !== undefined) edits.push([['environment', 'MAILMCP_CONFIG'], config]);
   return edits;
 }
 
@@ -116,13 +116,14 @@ async function replaceFile(path: string, text: string): Promise<void> {
 }
 
 function jsonHarness(
-  label: string, available: () => Promise<boolean>, paths: string[], key: string, edits: (entry: unknown) => Edit[], hint?: string,
+  label: string, available: () => Promise<boolean>, paths: string[], key: string,
+  edits: (entry: unknown, config?: string) => Edit[], { hint, config }: { hint?: string; config?: string } = {},
 ): Detectable {
   async function update(path: string, remove: boolean): Promise<void> {
     const text = await readText(path) ?? '';
-    const updated = edit(text, [key, name], remove ? [[[], undefined]] : edits(servers(text, key, path)[name]));
+    const updated = edit(text, [key, name], remove ? [[[], undefined]] : edits(servers(text, key, path)[name], config));
     const entry = servers(updated, key, path)[name];
-    if (remove ? entry !== undefined : !current(entry)) throw new Error(`Cannot update ${path}. Check it for duplicate keys.`);
+    if (remove ? entry !== undefined : !current(entry, config)) throw new Error(`Cannot update ${path}. Check it for duplicate keys.`);
     await replaceFile(path, updated);
   }
   async function containing(): Promise<Array<{ path: string; entry: unknown }>> {
@@ -138,7 +139,7 @@ function jsonHarness(
     for (const path of await targets()) await update(path, false);
   }
   return {
-    label, hint, install, update: install, available,
+    label, hint, config, install, update: install, available,
     locations: () => targets().catch(() => [paths[0]!]),
     entries: async () => (await containing()).map(item => item.entry),
     uninstall: async () => {
@@ -164,20 +165,22 @@ async function codex(args: string[]): Promise<string> {
   return (await run('codex', ['mcp', ...args], { cwd: tmpdir() })).stdout;
 }
 
+function isTable(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) && !(value instanceof Date);
+}
+
 function codexServers(config: Record<string, unknown>, path: string): Record<string, unknown> {
-  const entries = jsonObject.optional().safeParse(config.mcp_servers);
-  if (!entries.success) throw new Error(`mcp_servers in ${path} is not a table.`);
-  return entries.data ?? {};
+  const entries = config.mcp_servers ?? {};
+  if (!isTable(entries)) throw new Error(`mcp_servers in ${path} is not a table.`);
+  return entries;
 }
 
 // Codex has no project scope option, so edit the project file directly.
-// Codex merges the project entry with the user entry, so always set the configuration path.
-function codexProject(path: string): Detectable {
-  const configFile = configPath();
+function codexProject(path: string, configFile: string): Detectable {
   async function read(): Promise<{ text: string; config: Record<string, unknown> }> {
     const text = await readText(path) ?? '';
     try {
-      return { text, config: jsonObject.parse(parseToml(text)) };
+      return { text, config: parseToml(text) };
     } catch {
       throw new Error(`${path} is not valid TOML.`);
     }
@@ -192,7 +195,9 @@ function codexProject(path: string): Detectable {
     const rest = others(config);
     let updated = rest;
     if (!remove) {
-      const { env: variables, ...entry } = jsonObject.parse(codexServers(config, path)[name] ?? {});
+      const existing = codexServers(config, path)[name] ?? {};
+      if (!isTable(existing)) throw new Error(`mcp_servers.${name} in ${path} is not a table.`);
+      const { env: variables, ...entry } = existing;
       const { MAILMCP_CONFIG: _config, ...kept } = strings.parse(variables) ?? {};
       const environment = { ...kept, MAILMCP_CONFIG: configFile };
       const server = { ...entry, command: command[0], args: command.slice(1), ...(Object.keys(environment).length && { env: environment }) };
@@ -201,7 +206,7 @@ function codexProject(path: string): Detectable {
     let patched: string;
     try {
       patched = patchToml(text, updated);
-      const result = jsonObject.parse(parseToml(patched));
+      const result = parseToml(patched);
       const entry = codexServers(result, path)[name];
       if (!isDeepStrictEqual(others(result), rest) || (remove ? entry !== undefined : !current(entry, configFile))) throw new Error();
     } catch {
@@ -240,13 +245,16 @@ function detectables(scope: Scope, root: string): Detectable[] {
   const hasOpencode = () => exists(opencode);
   const hasPi = () => exists(pi);
   const piHint = 'requires pi-mcp-adapter';
+  // Some harnesses merge the project entry with the user entry, so project entries always set the configuration path.
+  const config = configPath();
   if (scope === 'project') return [
-    jsonHarness('Claude Code', hasClaude, [join(root, '.mcp.json')], 'mcpServers', stdioEdits, 'asks for approval on first start'),
-    codexProject(join(root, '.codex', 'config.toml')),
-    jsonHarness('Cursor', () => exists(cursor), [join(root, '.cursor', 'mcp.json')], 'mcpServers', stdioEdits),
-    jsonHarness('Gemini CLI', hasGemini, [join(root, '.gemini', 'settings.json')], 'mcpServers', stdioEdits),
-    jsonHarness('opencode', hasOpencode, ['opencode.json', 'opencode.jsonc'].map(file => join(root, file)), 'mcp', opencodeEdits),
-    jsonHarness('pi', hasPi, [join(root, '.mcp.json')], 'mcpServers', stdioEdits, piHint),
+    jsonHarness('Claude Code', hasClaude, [join(root, '.mcp.json')], 'mcpServers', stdioEdits,
+      { hint: 'asks for approval on first start', config }),
+    codexProject(join(root, '.codex', 'config.toml'), config),
+    jsonHarness('Cursor', () => exists(cursor), [join(root, '.cursor', 'mcp.json')], 'mcpServers', stdioEdits, { config }),
+    jsonHarness('Gemini CLI', hasGemini, [join(root, '.gemini', 'settings.json')], 'mcpServers', stdioEdits, { config }),
+    jsonHarness('opencode', hasOpencode, ['opencode.json', 'opencode.jsonc'].map(file => join(root, file)), 'mcp', opencodeEdits, { config }),
+    jsonHarness('pi', hasPi, [join(root, '.mcp.json')], 'mcpServers', stdioEdits, { hint: piHint, config }),
   ];
   return [
     {
@@ -276,7 +284,7 @@ function detectables(scope: Scope, root: string): Detectable[] {
     jsonHarness('Gemini CLI', hasGemini, [join(gemini, 'settings.json')], 'mcpServers', stdioEdits),
     jsonHarness('opencode', hasOpencode,
       ['opencode.json', 'opencode.jsonc', 'config.json'].map(file => join(opencode, file)), 'mcp', opencodeEdits),
-    jsonHarness('pi', hasPi, [join(home, '.config', 'mcp', 'mcp.json')], 'mcpServers', stdioEdits, piHint),
+    jsonHarness('pi', hasPi, [join(home, '.config', 'mcp', 'mcp.json')], 'mcpServers', stdioEdits, { hint: piHint }),
   ];
 }
 
