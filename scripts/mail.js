@@ -1,5 +1,7 @@
 ObjC.import('Foundation');
 
+var mailboxLimit = 1000;
+
 function run() {
   try {
     var input = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile;
@@ -67,7 +69,7 @@ function resolveMessage(account, ref) {
 
 function mailboxList(account) {
   var boxes = account.mailboxes();
-  if (boxes.length > 1000) throw new Error('Account has more than 1000 mailboxes.');
+  if (boxes.length > mailboxLimit) throw new Error('Account has more than ' + mailboxLimit + ' mailboxes.');
   var result = boxes.map(function (box) {
     var path = actualPath(box, account.id());
     var entry = { path: path, unread: box.unreadCount(), ambiguous: false };
@@ -206,10 +208,12 @@ function validateMailboxName(name) {
   }
 }
 
-function requireNewPath(account, path) {
+function requireNewPath(account, path, creating) {
   path.forEach(validateMailboxName);
   var key = JSON.stringify(path).normalize('NFC').toLowerCase();
-  if (mailboxList(account).some(function (entry) { return JSON.stringify(entry.path).normalize('NFC').toLowerCase() === key; })) {
+  var entries = mailboxList(account);
+  if (creating && entries.length >= mailboxLimit) throw new Error('MAILBOX_LIMIT: Remove an empty custom folder before creating another.');
+  if (entries.some(function (entry) { return JSON.stringify(entry.path).normalize('NFC').toLowerCase() === key; })) {
     throw new Error('MAILBOX_EXISTS: A mailbox already uses this path.');
   }
 }
@@ -266,10 +270,10 @@ function requireEmptyMailbox(account, path) {
   return target;
 }
 
-function deletionDialog(mail, process, viewer, account, path, requireFront) {
+function deletionDialog(mail, process, viewer, account, path, cancelOnly) {
   var selected = viewer.selectedMailboxes();
   var window = elementWithIdentifier(process.windows(), 'Mail.messageViewer.window.' + viewer.id());
-  if ((requireFront !== false && (mail.windows[0].id() !== viewer.window.id() ||
+  if ((!cancelOnly && (mail.windows[0].id() !== viewer.window.id() ||
       process.windows[0].attributes.byName('AXIdentifier').value() !== 'Mail.messageViewer.window.' + viewer.id())) ||
       selected.length !== 1 || selected[0].account().id() !== account.id() ||
       JSON.stringify(actualPath(selected[0], account.id())) !== JSON.stringify(path)) {
@@ -288,11 +292,12 @@ function deletionDialog(mail, process, viewer, account, path, requireFront) {
     var format = strings['DeleteMailboxQuestionFormat%1$@'];
     return buttons && typeof format === 'string' &&
       texts.length === 2 && texts.indexOf(format.replace('%1$@', function () { return path[path.length - 1]; })) !== -1 &&
-      texts.indexOf(strings.DeleteMailboxAlertMessageFormat) !== -1 &&
+      (texts.indexOf(strings.DeleteMailboxAlertMessageFormat) !== -1 ||
+        (cancelOnly && texts.indexOf(strings.DeleteMailboxAndSubmailboxesAlertMessageFormat) !== -1)) &&
       remove.name() === buttons.DeleteButton && cancel.name() === buttons.ToolbarCancel;
   });
   if (!matches || sheet.buttons.length !== 2) throw new Error('MAILBOX_UI_UNAVAILABLE: Mail dialog is not the exact folder deletion confirmation.');
-  return { remove: remove, cancel: cancel };
+  return cancelOnly ? { cancel: cancel } : { remove: remove };
 }
 
 function cancelMailboxDeletion(mail, account, path, windowId) {
@@ -301,7 +306,7 @@ function cancelMailboxDeletion(mail, account, path, windowId) {
   var process = Application('com.apple.systemevents').processes.byName('Mail');
   for (var attempt = 0; attempt < 10; attempt++) {
     try {
-      deletionDialog(mail, process, viewers[0], account, path, false).cancel.click();
+      deletionDialog(mail, process, viewers[0], account, path, true).cancel.click();
       return { dismissed: true };
     } catch (_) { delay(0.1); }
   }
@@ -375,7 +380,7 @@ function dispatch(mail, request) {
         }).map(function (entry) { return entry.path; }) };
     }
     case 'create_mailbox': {
-      requireNewPath(account, args.mailbox);
+      requireNewPath(account, args.mailbox, true);
       if (args.mailbox.length > 1) resolveMailbox(account, args.mailbox.slice(0, -1));
       account.mailboxes.push(mail.Mailbox({ name: args.mailbox.join('/') }));
       waitForMailbox(account, args.mailbox);

@@ -91,12 +91,12 @@ export async function startServer(): Promise<void> {
           : /MAILBOX_UI_UNAVAILABLE/.test(message) ? 'MAILBOX_UI_UNAVAILABLE'
           : /MAILBOX_UNAVAILABLE/.test(message) ? 'MAILBOX_UNAVAILABLE'
           : /MAILBOX_CHANGED/.test(message) ? 'MAILBOX_CHANGED'
-          : /^(MAILBOX_EXISTS|MAILBOX_PROTECTED|MAILBOX_NOT_EMPTY|INVALID_MAILBOX_NAME):/.test(message) ? message.split(':')[0]!
+          : /^(MAILBOX_EXISTS|MAILBOX_PROTECTED|MAILBOX_NOT_EMPTY|MAILBOX_LIMIT|INVALID_MAILBOX_NAME):/.test(message) ? message.split(':')[0]!
           : /STALE_REFERENCE/.test(message) ? 'STALE_REFERENCE' : 'MAIL_ERROR';
         return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify({ error: {
           code, message, operation: name, mailbox: args.mailbox ?? args.ref ?? null,
           retryable: readOnly && ['REQUEST_TIMEOUT', 'MAILBOX_CHANGED', 'QUEUE_FULL'].includes(code),
-          guidance: ['MAILBOX_EXISTS', 'MAILBOX_PROTECTED', 'MAILBOX_NOT_EMPTY', 'INVALID_MAILBOX_NAME'].includes(code) ? 'No folder was changed. Correct the request before retrying.'
+          guidance: ['MAILBOX_EXISTS', 'MAILBOX_PROTECTED', 'MAILBOX_NOT_EMPTY', 'MAILBOX_LIMIT', 'INVALID_MAILBOX_NAME'].includes(code) ? 'No folder was changed. Correct the request before retrying.'
             : !readOnly && started !== undefined ? 'The action may have completed. Inspect Mail before retrying.'
             : code === 'MAILBOX_UNAVAILABLE' ? 'List mailboxes again. Use an available exact path.'
             : code === 'QUEUE_FULL' ? 'Wait for outstanding calls. Submit one bounded batch at a time.'

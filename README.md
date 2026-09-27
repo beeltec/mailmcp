@@ -139,6 +139,7 @@ Use `create_mailbox` with a full path, such as `["Projects", "Invoices"]`. The p
 `get_mailbox` returns message and unread counts plus direct child paths.
 `rename_mailbox` changes the final name, preserving messages and children. It does not move folders between parents.
 Refresh discovery and message references after renaming a folder or its parent.
+Creation stops at the supported limit of 1,000 mailboxes per account.
 Names cannot contain slashes, control characters, or surrounding spaces. Existing paths are rejected, ignoring case and Unicode composition.
 Assigned system folders, configured Trash, and their parents cannot be renamed or deleted.
 Common Archive/Notes folders are also protected at account root or under INBOX, [Gmail], or [Google Mail].
