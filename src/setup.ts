@@ -19,7 +19,7 @@ function answer<T>(value: T): Exclude<T, symbol> {
 }
 
 async function withSpinner<T>(message: string, task: () => Promise<T>): Promise<T> {
-  const progress = spinner();
+  const progress = spinner({ cancelMessage: 'Setup cancelled.', onCancel: () => process.exit(1) });
   progress.start(message);
   try {
     const result = await task();
@@ -93,13 +93,14 @@ async function manageHarnesses(): Promise<void> {
     message: 'Install the MCP server in which harnesses? Unselect a harness to uninstall.',
     options: statuses.map(({ harness, installed, current, error }) => ({
       value: harness.label, label: harness.label, disabled: error !== undefined,
-      hint: [error ?? (installed ? 'installed' : 'not installed'), installed && !current && 'outdated', harness.hint].filter(Boolean).join(', '),
+      hint: [error ?? (installed ? 'installed' : 'not installed'), installed && !current && (harness.update ? 'outdated' : 'outdated, reinstall to update'), harness.hint].filter(Boolean).join(', '),
     })),
     initialValues: statuses.filter(status => status.installed).map(status => status.harness.label),
     required: false,
   }));
   const install = statuses.filter(status => !status.error && !status.installed && chosen.includes(status.harness.label));
-  const refresh = statuses.filter(status => !status.error && status.installed && !status.current && chosen.includes(status.harness.label));
+  const refresh = statuses.filter(status =>
+    !status.error && status.installed && !status.current && status.harness.update && chosen.includes(status.harness.label));
   const uninstall = statuses.filter(status => !status.error && status.installed && !chosen.includes(status.harness.label));
   if (!install.length && !refresh.length && !uninstall.length) return;
   if (uninstall.length && !answer(await confirm({
@@ -109,7 +110,7 @@ async function manageHarnesses(): Promise<void> {
   for (const [action, list] of [['Installed in', install], ['Updated in', refresh], ['Uninstalled from', uninstall]] as const) {
     for (const { harness } of list) {
       try {
-        await (action === 'Uninstalled from' ? harness.uninstall() : harness.install());
+        await (action === 'Installed in' ? harness.install() : action === 'Updated in' ? harness.update?.() : harness.uninstall());
         log.success(`${action} ${harness.label}`);
       } catch (error) {
         failed.push(harness.label);

@@ -46,10 +46,10 @@ It shows only harnesses it finds on this Mac:
 | Harness | Detection | Configuration |
 | --- | --- | --- |
 | Claude Code | `claude` command | `claude mcp add --scope user` (`~/.claude.json`) |
-| Codex | `codex` command | `codex mcp add` (`~/.codex/config.toml`) |
+| Codex | `codex` command | `codex mcp add`, global scope (`~/.codex/config.toml`) |
 | Cursor | `~/.cursor` | `~/.cursor/mcp.json` |
 | Gemini CLI | `~/.gemini` (or `$GEMINI_CLI_HOME/.gemini`) | `settings.json` in that folder |
-| opencode | `~/.config/opencode` | `opencode.json` or `opencode.jsonc` in that folder |
+| opencode | `~/.config/opencode` | `opencode.json`, `opencode.jsonc`, or `config.json` in that folder |
 | pi | `~/.pi/agent` | `~/.config/mcp/mcp.json` |
 
 pi needs the MCP adapter. Install it with `pi install npm:pi-mcp-adapter`.
@@ -57,6 +57,8 @@ Setup keeps the other entries, comments, and formatting in these files.
 If another server already uses the name `mail`, setup shows the conflict and does not change that harness.
 When `MAILMCP_CONFIG` is set during setup, the installed entries pass the same path to the server.
 Setup marks an entry as outdated when its Node path, server path, or `MAILMCP_CONFIG` differs. Keep the harness selected to update the entry.
+Updates change only these values and keep other settings, such as tool filters and timeouts.
+Setup cannot update a Codex entry without losing its other settings. Uninstall it and install it again instead.
 Restart the harness or its MCP connection after installation or configuration changes.
 
 To add the server manually, use an absolute executable path so the harness can find your Node installation:
