@@ -140,7 +140,9 @@ Use `create_mailbox` with a full path, such as `["Projects", "Invoices"]`. The p
 `rename_mailbox` changes the final name, preserving messages and children. It does not move folders between parents.
 Refresh discovery and message references after renaming a folder or its parent.
 Names cannot contain slashes, control characters, or surrounding spaces. Existing paths are rejected, ignoring case and Unicode composition.
-Assigned system folders, configured Trash, their parents, and common Archive/Notes folders cannot be renamed or deleted.
+Assigned system folders, configured Trash, and their parents cannot be renamed or deleted.
+Common Archive/Notes folders are also protected at account root or under INBOX, [Gmail], or [Google Mail].
+Custom folders elsewhere can share a system folder’s name.
 `delete_mailbox` uses Mail’s Delete Mailbox menu because its scripting delete command fails for server folders.
 It checks the selected account, exact path, empty state, viewer identifier, and exact localized confirmation before confirming.
 Confirmation text comes from the installed Mail app’s language resources. Unsupported resources or controls stop deletion.

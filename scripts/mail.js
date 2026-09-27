@@ -234,11 +234,13 @@ function protectMailbox(mail, account, config, path) {
     catch (_) { throw new Error('MAILBOX_PROTECTED: Cannot verify Mail system folders. Inspect Mail before changing folders.'); }
     children.forEach(function (box) {
       var owner = box.account();
-      if (owner && owner.id() === account.id()) names.push(box.name().toLowerCase());
+      if (owner && owner.id() === account.id()) protectedPaths.push(actualPath(box, account.id()));
     });
   });
   mailboxList(account).forEach(function (entry) {
-    if (names.indexOf(entry.path[entry.path.length - 1].toLowerCase()) !== -1) protectedPaths.push(entry.path);
+    var conventionalLocation = entry.path.length === 1 || (entry.path.length === 2 &&
+      ['INBOX', '[Gmail]', '[Google Mail]'].indexOf(entry.path[0]) !== -1);
+    if (conventionalLocation && names.indexOf(entry.path[entry.path.length - 1].toLowerCase()) !== -1) protectedPaths.push(entry.path);
   });
   if (protectedPaths.some(function (protectedPath) { return pathStartsWith(protectedPath, path); })) {
     throw new Error('MAILBOX_PROTECTED: System folders, configured Trash, and their parents cannot be renamed or deleted.');
