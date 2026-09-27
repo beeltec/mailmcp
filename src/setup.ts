@@ -1,9 +1,11 @@
-import { createInterface } from 'node:readline/promises';
-import { stdin, stdout } from 'node:process';
+import { stdin } from 'node:process';
+import { confirm, groupMultiselect, intro, isCancel, log, multiselect, outro, select, spinner } from '@clack/prompts';
 import { z } from 'zod';
 import { callMail } from './bridge.js';
-import { configPath, mailboxPath, saveConfig, type AccountConfig } from './config.js';
-import { selectTrash } from './trash.js';
+import { configPath, loadConfig, mailboxPath, saveConfig, type AccountConfig } from './config.js';
+import { harnessStatus } from './harnesses.js';
+import { toolGroups, toolNames } from './tools.js';
+import { detectTrash } from './trash.js';
 
 const accountsSchema = z.array(z.object({ id: z.string(), name: z.string(), emails: z.array(z.string()) }));
 const setupMailboxesSchema = z.object({
@@ -11,32 +13,103 @@ const setupMailboxesSchema = z.object({
   trashNames: z.array(z.string()),
 });
 
+function answer<T>(value: T): Exclude<T, symbol> {
+  if (isCancel(value)) throw new Error('Setup cancelled.');
+  return value as Exclude<T, symbol>;
+}
+
+async function withSpinner<T>(message: string, task: () => Promise<T>): Promise<T> {
+  const progress = spinner();
+  progress.start(message);
+  try {
+    const result = await task();
+    progress.stop(message);
+    return result;
+  } catch (error) {
+    progress.error(message);
+    throw error;
+  }
+}
+
 export async function setup(): Promise<void> {
   if (!stdin.isTTY) throw new Error('Run setup in an interactive terminal. You can also edit the configuration file directly.');
-  const accounts = accountsSchema.parse(await callMail('discover_accounts'));
+  intro('mailmcp setup');
+  const current = await loadConfig().catch(() => undefined);
+  const accounts = accountsSchema.parse(await withSpinner('Reading Mail accounts', () => callMail('discover_accounts')));
   if (!accounts.length) throw new Error('No Mail accounts found. Configure Apple Mail first.');
-  const terminal = createInterface({ input: stdin, output: stdout });
-  try {
-    accounts.forEach((account, index) => console.log(`${index + 1}. ${account.name} (${account.emails.join(', ')})`));
-    const selection = await terminal.question('Allow accounts (All or numbers separated by commas; replaces the current list): ');
-    const numbers = selection.trim().toLowerCase() === 'all'
-      ? accounts.map((_account, index) => index + 1)
-      : selection.split(',').map(value => Number(value.trim()));
-    if (!numbers.length || numbers.some(value => !Number.isInteger(value) || value < 1 || value > accounts.length)) {
-      throw new Error('Enter All or valid account numbers. Configuration was not changed.');
+  const ids = answer(await multiselect({
+    message: 'Which accounts can the MCP server use? Press A to select all.',
+    options: accounts.map(account => {
+      const emails = account.emails.join(', ');
+      return { value: account.id, label: emails === account.name ? account.name : `${account.name} (${emails})` };
+    }),
+    initialValues: current?.accounts.map(account => account.id).filter(id => accounts.some(account => account.id === id)) ?? [],
+  }));
+  const selected: AccountConfig[] = [];
+  for (const account of accounts.filter(item => ids.includes(item.id))) {
+    const email = account.emails.length > 1 ? answer(await select({
+      message: `Sender email for ${account.name}`,
+      options: account.emails.map(value => ({ value })),
+      initialValue: current?.accounts.find(item => item.id === account.id)?.email ?? account.emails[0],
+    })) : account.emails[0];
+    if (!email) throw new Error(`${account.name} has no email address. Configuration was not changed.`);
+    const partial = { id: account.id, email, trash: ['pending'] };
+    const { mailboxes, trashNames } = setupMailboxesSchema.parse(
+      await withSpinner(`Reading mailboxes of ${account.name}`, () => callMail('setup_mailboxes', {}, partial)));
+    const usable = mailboxes.filter(mailbox => !mailbox.ambiguous);
+    if (!usable.length) throw new Error(`No mailboxes found for ${account.name}. Configuration was not changed.`);
+    let trash = detectTrash(usable, trashNames);
+    if (trash) log.info(`Trash for ${account.name}: ${trash.join(' / ')} (automatically detected)`);
+    else trash = answer(await select({
+      message: `Which mailbox is Trash for ${account.name}?`,
+      options: usable.map(mailbox => ({ value: mailbox.path, label: mailbox.path.join(' / ') })),
+      maxItems: 15,
+    }));
+    selected.push({ id: account.id, email, trash });
+  }
+  const tools = answer(await groupMultiselect({
+    message: 'Which tools can the MCP server offer? list_accounts is always on.',
+    options: Object.fromEntries(Object.entries(toolGroups).map(([group, names]) => [group, names.map(value => ({ value }))])),
+    initialValues: current?.tools ?? toolNames,
+  }));
+  await saveConfig({ accounts: selected, tools });
+  log.success(`Saved ${configPath()}`);
+  await manageHarnesses();
+  outro('Restart your MCP connections to apply changes.');
+}
+
+async function manageHarnesses(): Promise<void> {
+  const statuses = await withSpinner('Looking for harnesses', harnessStatus);
+  if (!statuses.length) {
+    log.warn('No supported harness found. Add the MCP server to your client manually.');
+    return;
+  }
+  const chosen = answer(await multiselect({
+    message: 'Install the MCP server in which harnesses? Unselect a harness to uninstall.',
+    options: statuses.map(({ harness, installed, error }) => ({
+      value: harness.label, label: harness.label, disabled: error !== undefined,
+      hint: [error ?? (installed ? 'installed' : 'not installed'), harness.hint].filter(Boolean).join(', '),
+    })),
+    initialValues: statuses.filter(status => status.installed).map(status => status.harness.label),
+    required: false,
+  }));
+  const install = statuses.filter(status => !status.error && !status.installed && chosen.includes(status.harness.label));
+  const uninstall = statuses.filter(status => !status.error && status.installed && !chosen.includes(status.harness.label));
+  if (!install.length && !uninstall.length) return;
+  if (uninstall.length && !answer(await confirm({
+    message: `Uninstall the MCP server from ${uninstall.map(status => status.harness.label).join(', ')}?`,
+  }))) uninstall.length = 0;
+  const failed: string[] = [];
+  for (const [action, list] of [['Installed in', install], ['Uninstalled from', uninstall]] as const) {
+    for (const { harness } of list) {
+      try {
+        await (action === 'Installed in' ? harness.install() : harness.uninstall());
+        log.success(`${action} ${harness.label}`);
+      } catch (error) {
+        failed.push(harness.label);
+        log.error(`${harness.label}: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
-    const selected: AccountConfig[] = [];
-    for (const number of new Set(numbers)) {
-      const account = accounts[number - 1]!;
-      let email = account.emails[0];
-      if (account.emails.length > 1) email = await terminal.question(`Sender email for ${account.name} (${account.emails.join(', ')}): `);
-      if (!email || !account.emails.includes(email)) throw new Error('Select an email configured in this account.');
-      const partial = { id: account.id, email, trash: ['pending'] };
-      const { mailboxes, trashNames } = setupMailboxesSchema.parse(await callMail('setup_mailboxes', {}, partial));
-      const trash = await selectTrash(account.name, mailboxes.filter(mailbox => !mailbox.ambiguous), trashNames, terminal);
-      selected.push({ id: account.id, email, trash });
-    }
-    await saveConfig({ accounts: selected });
-    console.log(`\nSaved ${configPath()}. Restart your MCP connection to apply changes.`);
-  } finally { terminal.close(); }
+  }
+  if (failed.length) throw new Error(`Could not change ${failed.join(', ')}. The account configuration was saved.`);
 }
