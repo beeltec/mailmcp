@@ -48,12 +48,14 @@ It shows only harnesses it finds on this Mac:
 | Claude Code | `claude` command | `claude mcp add --scope user` (`~/.claude.json`) |
 | Codex | `codex` command | `codex mcp add` (`~/.codex/config.toml`) |
 | Cursor | `~/.cursor` | `~/.cursor/mcp.json` |
-| Gemini CLI | `~/.gemini` | `~/.gemini/settings.json` |
-| opencode | `~/.config/opencode` | `~/.config/opencode/opencode.json` |
+| Gemini CLI | `~/.gemini` (or `$GEMINI_CLI_HOME/.gemini`) | `settings.json` in that folder |
+| opencode | `~/.config/opencode` | `opencode.json` or `opencode.jsonc` in that folder |
 | pi | `~/.pi/agent` | `~/.config/mcp/mcp.json` |
 
 pi needs the MCP adapter. Install it with `pi install npm:pi-mcp-adapter`.
-Setup keeps the other entries in these files. It does not read `opencode.jsonc`.
+Setup keeps the other entries, comments, and formatting in these files.
+If another server already uses the name `mail`, setup shows the conflict and does not change that harness.
+When `MAILMCP_CONFIG` is set during setup, the installed entries pass the same path to the server.
 Restart the harness or its MCP connection after installation or configuration changes.
 
 To add the server manually, use an absolute executable path so the harness can find your Node installation:

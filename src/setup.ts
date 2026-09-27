@@ -71,6 +71,7 @@ export async function setup(): Promise<void> {
     message: 'Which tools can the MCP server offer? list_accounts is always on.',
     options: Object.fromEntries(Object.entries(toolGroups).map(([group, names]) => [group, names.map(value => ({ value }))])),
     initialValues: current?.tools ?? toolNames,
+    required: false,
   }));
   await saveConfig({ accounts: selected, tools });
   log.success(`Saved ${configPath()}`);
