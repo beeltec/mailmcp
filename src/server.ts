@@ -88,6 +88,7 @@ export async function startServer(): Promise<void> {
         const message = error instanceof Error ? error.message : 'Mail operation failed.';
         const code = deadline.aborted ? 'REQUEST_TIMEOUT' : signal.aborted ? 'CANCELLED'
           : /QUEUE_FULL/.test(message) ? 'QUEUE_FULL'
+          : /MAILBOX_UI_UNAVAILABLE/.test(message) ? 'MAILBOX_UI_UNAVAILABLE'
           : /MAILBOX_UNAVAILABLE/.test(message) ? 'MAILBOX_UNAVAILABLE'
           : /MAILBOX_CHANGED/.test(message) ? 'MAILBOX_CHANGED'
           : /^(MAILBOX_EXISTS|MAILBOX_PROTECTED|MAILBOX_NOT_EMPTY|INVALID_MAILBOX_NAME):/.test(message) ? message.split(':')[0]!

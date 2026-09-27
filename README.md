@@ -142,7 +142,10 @@ Refresh discovery and message references after renaming a folder or its parent.
 Names cannot contain slashes, control characters, or surrounding spaces. Existing paths are rejected, ignoring case and Unicode composition.
 Assigned system folders, configured Trash, their parents, and common Archive/Notes folders cannot be renamed or deleted.
 `delete_mailbox` uses Mail’s Delete Mailbox menu because its scripting delete command fails for server folders.
-It checks the selected account, exact path, and empty state before confirming. An unexpected dialog stops the operation.
+It checks the selected account, exact path, empty state, viewer identifier, and exact localized confirmation before confirming.
+Confirmation text comes from the installed Mail app’s language resources. Unsupported resources or controls stop deletion.
+Failures and cancellation attempt to dismiss only the matching, operation-owned deletion dialog.
+If Mail is unresponsive, inspect and dismiss the dialog yourself before retrying.
 Allow Accessibility for the server host in macOS System Settings. Keep a Mail viewer open and close other Mail dialogs.
 Do not interact with Mail while deletion runs.
 `delete_mailbox` refuses folders with messages or children. Move mail out and delete empty children first.

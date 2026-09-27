@@ -24,12 +24,15 @@ export async function callMail(
     let bytes = 0;
     let diagnostic = '';
     let failed = false;
+    let failure: Error | undefined;
+    let deletionWindowId: number | undefined;
     const fail = (error: Error) => {
       if (failed) return;
       failed = true;
       clearTimeout(timer);
       child.kill('SIGKILL');
-      reject(error);
+      if (operation === 'delete_mailbox') failure = error;
+      else reject(error);
     };
     const timer = setTimeout(() => fail(new Error(
       readOnly
@@ -44,22 +47,45 @@ export async function callMail(
       if (bytes > 4 * 1024 * 1024) fail(new Error('Mail response exceeded the size limit.'));
       else chunks.push(chunk);
     });
-    child.stderr.on('data', (chunk: Buffer) => { diagnostic = (diagnostic + chunk.toString()).slice(-2000); });
+    child.stderr.on('data', (chunk: Buffer) => {
+      diagnostic = (diagnostic + chunk.toString()).slice(-2000);
+      const marker = /MAILMCP_DELETE_WINDOW:(\d+)\n/u.exec(diagnostic);
+      if (marker) deletionWindowId = Number(marker[1]);
+    });
     child.on('error', fail);
     child.stdin.on('error', fail);
-    child.on('close', code => {
+    async function cleanupDeletion(): Promise<void> {
+      if (operation !== 'delete_mailbox' || deletionWindowId === undefined) return;
+      try {
+        await callMail('cancel_mailbox_deletion', { ...args, windowId: deletionWindowId }, account, AbortSignal.timeout(5000));
+      } catch { /* Do not confirm a dialog if Mail is unavailable. */ }
+    }
+    child.on('close', async code => {
       clearTimeout(timer);
       signal?.removeEventListener('abort', abort);
-      if (failed) return;
+      if (failed) {
+        if (failure) {
+          await cleanupDeletion();
+          reject(failure);
+        }
+        return;
+      }
       if (code !== 0) {
+        await cleanupDeletion();
         reject(new Error(`Mail automation failed (${code}). Check macOS Automation permissions. ${diagnostic}`));
         return;
       }
       try {
         const result = envelope.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
         if (result.ok) resolve(result.data);
-        else reject(new Error(result.error));
-      } catch (error) { reject(error); }
+        else {
+          await cleanupDeletion();
+          reject(new Error(result.error));
+        }
+      } catch (error) {
+        await cleanupDeletion();
+        reject(error);
+      }
     });
     if (!failed) child.stdin.end(JSON.stringify({ operation, args, account }));
   });
