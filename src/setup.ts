@@ -115,16 +115,22 @@ async function manageHarnesses(): Promise<void> {
     message: `Uninstall the MCP server from ${uninstall.map(status => status.harness.label).join(', ')}?`,
   }))) uninstall.length = 0;
   const failed: string[] = [];
-  for (const [action, list] of [['Installed in', install], ['Updated in', refresh], ['Uninstalled from', uninstall]] as const) {
-    for (const { harness } of list) {
-      try {
-        await (action === 'Installed in' ? harness.install() : action === 'Updated in' ? harness.update?.() : harness.uninstall());
-        log.success(`${action} ${harness.label}`);
-      } catch (error) {
-        failed.push(harness.label);
-        log.error(`${harness.label}: ${error instanceof Error ? error.message : String(error)}`);
+  const wait = () => log.warn('Wait until the harness changes are complete.');
+  process.on('SIGINT', wait);
+  try {
+    for (const [action, list] of [['Installed in', install], ['Updated in', refresh], ['Uninstalled from', uninstall]] as const) {
+      for (const { harness } of list) {
+        try {
+          await (action === 'Installed in' ? harness.install() : action === 'Updated in' ? harness.update?.() : harness.uninstall());
+          log.success(`${action} ${harness.label}`);
+        } catch (error) {
+          failed.push(harness.label);
+          log.error(`${harness.label}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
     }
+  } finally {
+    process.off('SIGINT', wait);
   }
   if (failed.length) throw new Error(`Could not change ${failed.join(', ')}. The account configuration was saved.`);
 }

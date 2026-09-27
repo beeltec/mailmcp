@@ -115,8 +115,10 @@ function jsonHarness(
 ): Detectable {
   async function update(path: string, remove: boolean): Promise<void> {
     const text = await readText(path) ?? '';
-    const entry = servers(text, key, path)[name];
-    await replaceFile(path, edit(text, [key, name], remove ? [[[], undefined]] : edits(entry)));
+    const updated = edit(text, [key, name], remove ? [[[], undefined]] : edits(servers(text, key, path)[name]));
+    const entry = servers(updated, key, path)[name];
+    if (remove ? entry !== undefined : !current(entry)) throw new Error(`Cannot update ${path}. Check it for duplicate keys.`);
+    await replaceFile(path, updated);
   }
   async function containing(): Promise<Array<{ path: string; entry: unknown }>> {
     const found = await Promise.all(paths.map(async path => ({ path, entry: servers(await readText(path), key, path)[name] })));
