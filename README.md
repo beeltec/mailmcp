@@ -13,7 +13,14 @@ Mail may open composer windows during draft operations. Run this server in your 
 Folder deletion also needs Automation permission for System Events and Accessibility permission for the process running the server.
 Other operations do not need Accessibility. The server does not need Full Disk Access or read Mail's private database.
 
-## Install from this repository
+## Install
+
+```sh
+npm install -g @beeltec/mailmcp@0.5.0
+mailmcp setup
+```
+
+To install from this repository instead:
 
 ```sh
 npm ci
@@ -21,9 +28,6 @@ npm run build
 npm install -g .
 mailmcp setup
 ```
-
-The repository is currently private. The package is prepared for npm distribution but has not been published.
-`npm pack` creates an installable archive. Once published, users can install a pinned package version through npm.
 
 Setup is an interactive terminal program. Use the arrow keys to move, Space to select, and Enter to confirm.
 The first setup runs these steps in sequence:
