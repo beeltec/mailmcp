@@ -2,9 +2,9 @@ import { stdin } from 'node:process';
 import { confirm, groupMultiselect, intro, isCancel, log, multiselect, outro, select, spinner } from '@clack/prompts';
 import { z } from 'zod';
 import { callMail } from './bridge.js';
-import { configPath, loadConfig, mailboxPath, saveConfig, type AccountConfig } from './config.js';
+import { configPath, loadConfig, mailboxPath, saveConfig, type AccountConfig, type Config } from './config.js';
 import { harnessStatus } from './harnesses.js';
-import { toolGroups, toolNames } from './tools.js';
+import { destructiveTools, toolGroups, toolNames, type ToolName } from './tools.js';
 import { detectTrash } from './trash.js';
 
 const accountsSchema = z.array(z.object({ id: z.string(), name: z.string(), emails: z.array(z.string()) }));
@@ -13,8 +13,10 @@ const setupMailboxesSchema = z.object({
   trashNames: z.array(z.string()),
 });
 
+class Cancelled extends Error {}
+
 function answer<T>(value: T): Exclude<T, symbol> {
-  if (isCancel(value)) throw new Error('Setup cancelled.');
+  if (isCancel(value)) throw new Cancelled('Setup cancelled.');
   return value as Exclude<T, symbol>;
 }
 
@@ -43,6 +45,48 @@ export async function setup(): Promise<void> {
   if (!stdin.isTTY) throw new Error('Run setup in an interactive terminal. You can also edit the configuration file directly.');
   intro('mailmcp setup');
   const current = await loadConfig().catch(() => undefined);
+  if (current) await menu(current);
+  else {
+    const accounts = await selectAccounts(undefined);
+    const tools = await selectTools(toolNames.filter(name => !destructiveTools.includes(name)));
+    await save({ accounts, tools });
+    await manageHarnesses();
+  }
+  outro('Restart your MCP connections to apply changes.');
+}
+
+async function menu(config: Config): Promise<void> {
+  let choice = 'accounts';
+  for (;;) {
+    choice = answer(await select({
+      message: 'What do you want to change?',
+      initialValue: choice,
+      options: [
+        { value: 'accounts', label: 'Accounts and Trash mailboxes', hint: `${config.accounts.length} selected` },
+        { value: 'tools', label: 'Tools', hint: `${(config.tools ?? toolNames).length} of ${toolNames.length} enabled` },
+        { value: 'harnesses', label: 'Harnesses' },
+        { value: 'exit', label: 'Exit' },
+      ],
+    }));
+    if (choice === 'exit') return;
+    try {
+      if (choice === 'accounts') config = await save({ ...config, accounts: await selectAccounts(config) });
+      else if (choice === 'tools') config = await save({ ...config, tools: await selectTools(config.tools ?? toolNames) });
+      else await manageHarnesses();
+    } catch (error) {
+      if (!(error instanceof Cancelled)) throw error;
+      log.info('Cancelled. Nothing was changed.');
+    }
+  }
+}
+
+async function save(config: Config): Promise<Config> {
+  await saveConfig(config);
+  log.success(`Saved ${configPath()}`);
+  return config;
+}
+
+async function selectAccounts(current: Config | undefined): Promise<AccountConfig[]> {
   const accounts = accountsSchema.parse(await withSpinner('Reading Mail accounts', () => callMail('discover_accounts')));
   if (!accounts.length) throw new Error('No Mail accounts found. Configure Apple Mail first.');
   const ids = answer(await multiselect({
@@ -79,16 +123,17 @@ export async function setup(): Promise<void> {
     }
     selected.push({ id: account.id, email, trash });
   }
-  const tools = answer(await groupMultiselect({
+  return selected;
+}
+
+async function selectTools(initialValues: ToolName[]): Promise<ToolName[]> {
+  return answer(await groupMultiselect({
     message: 'Which tools can the MCP server offer? list_accounts is always on.',
-    options: Object.fromEntries(Object.entries(toolGroups).map(([group, names]) => [group, names.map(value => ({ value }))])),
-    initialValues: current?.tools ?? toolNames,
+    options: Object.fromEntries(Object.entries(toolGroups).map(([group, names]) =>
+      [group, names.map(value => ({ value, ...(destructiveTools.includes(value) && { hint: 'destructive' }) }))])),
+    initialValues,
     required: false,
   }));
-  await saveConfig({ accounts: selected, tools });
-  log.success(`Saved ${configPath()}`);
-  await manageHarnesses();
-  outro('Restart your MCP connections to apply changes.');
 }
 
 async function manageHarnesses(): Promise<void> {
@@ -132,5 +177,8 @@ async function manageHarnesses(): Promise<void> {
   } finally {
     process.off('SIGINT', wait);
   }
-  if (failed.length) throw new Error(`Could not change ${failed.join(', ')}. The account configuration was saved.`);
+  if (failed.length) {
+    log.error(`Could not change ${failed.join(', ')}.`);
+    process.exitCode = 1;
+  }
 }

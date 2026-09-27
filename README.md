@@ -25,19 +25,25 @@ mailmcp setup
 The repository is currently private. The package is prepared for npm distribution but has not been published.
 `npm pack` creates an installable archive. Once published, users can install a pinned package version through npm.
 
-Setup is an interactive terminal wizard. Use the arrow keys to move, Space to select, and Enter to confirm.
-Setup shows your current choices as defaults.
+Setup is an interactive terminal program. Use the arrow keys to move, Space to select, and Enter to confirm.
+The first setup runs these steps in sequence:
 
 1. Select the accounts to allow. Press `A` to select all accounts.
    Accounts with multiple sender addresses ask which address to use.
 2. Setup detects Trash mailboxes automatically.
    It asks you to select a Trash mailbox only when it cannot identify one unambiguously.
 3. Select the tools the server offers. `list_accounts` is always on.
+   Destructive tools (`trash_message` and `delete_mailbox`) are not selected by default.
 4. Select the harnesses that use the server. Setup shows where the server is already installed.
    Select a harness to install the server. Unselect it to uninstall the server after a confirmation.
 
+When a valid configuration exists, setup shows a menu instead.
+Select accounts and Trash mailboxes, tools, or harnesses to change only that part. Your current choices are the defaults.
+Setup saves each change immediately and then shows the menu again. Select Exit to finish.
+
 Only setup can discover unconfigured accounts. MCP tools cannot change the allowlist.
-Press Ctrl+C to cancel. Setup saves the configuration before the harness step.
+Press Ctrl+C or Esc to cancel. In the menu, this returns to the menu without changes.
+The first setup saves the configuration before the harness step.
 
 ## Connect harnesses
 
@@ -70,7 +76,7 @@ codex mcp add mail -- /absolute/path/to/node /absolute/path/to/mailmcp/dist/cli.
 
 ## Change allowed accounts
 
-Run `mailmcp setup` again. It replaces the account list only after all selections are valid.
+Run `mailmcp setup` again and select the accounts in the menu. It replaces the account list only after all selections are valid.
 You can also edit `~/.config/mailmcp/config.json`:
 
 ```json
