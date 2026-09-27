@@ -229,11 +229,15 @@ function codexProject(root: string, configFile: string): Detectable {
     entries: async () => {
       const entry = codexServers((await read()).config, path)[name];
       // Codex merges the user and parent project entries into this entry, so another server with this name also blocks it.
-      // An entry without a command gets it from these entries.
+      // A missing command or missing arguments come from these entries. The configuration path must be in this entry.
       const inherited = await codexEntries(root);
       const foreign = inherited.filter(item => !owned(item));
       if (entry === undefined) return foreign;
-      return [launch(entry).argv.length ? entry : inherited[0] ?? entry, ...foreign];
+      const local = launchSchema.safeParse(entry);
+      if (!local.success) return [entry, ...foreign];
+      const base = z.looseObject({ transport: launchSchema }).safeParse(inherited[0]).data?.transport;
+      const { command: executable = base?.command, args = base?.args, env: variables } = local.data;
+      return [{ command: executable, args, env: variables }, ...foreign];
     },
     install: () => update(false),
     update: () => update(false),
