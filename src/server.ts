@@ -160,7 +160,7 @@ export async function startServer(): Promise<void> {
   tool('rename_mailbox', 'Rename a custom folder within its current parent, preserving messages and children. System folders and parents of system folders are protected. Refresh mailbox paths and message references afterward.', {
     accountId, mailbox: mailboxPath, name: z.string().min(1).max(512),
   }, false, async (args, signal) => callMail('rename_mailbox', args, account(args.accountId), signal));
-  tool('delete_mailbox', 'Delete only an empty custom folder without child folders. Requires a Mail viewer, System Events Automation and Accessibility permission. Uses Mail controls; do not interact with Mail during deletion. System folders and their parents are protected. Move messages out first. Never deletes messages or folder trees.', {
+  tool('delete_mailbox', 'Delete only an empty custom folder without child folders. Requires a Mail viewer, System Events Automation and Accessibility permission. Uses Mail controls; do not interact with Mail during deletion. System folders and their parents are protected. Move messages out first and pause other sorting activity; synchronization can change contents after the last check.', {
     accountId, mailbox: mailboxPath,
   }, false, async (args, signal) => callMail('delete_mailbox', args, account(args.accountId), signal));
   const searchShape = {
