@@ -56,6 +56,7 @@ pi needs the MCP adapter. Install it with `pi install npm:pi-mcp-adapter`.
 Setup keeps the other entries, comments, and formatting in these files.
 If another server already uses the name `mail`, setup shows the conflict and does not change that harness.
 When `MAILMCP_CONFIG` is set during setup, the installed entries pass the same path to the server.
+Setup marks an entry as outdated when its Node path, server path, or `MAILMCP_CONFIG` differs. Keep the harness selected to update the entry.
 Restart the harness or its MCP connection after installation or configuration changes.
 
 To add the server manually, use an absolute executable path so the harness can find your Node installation:

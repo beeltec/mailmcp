@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { access, mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,8 +15,8 @@ export type Harness = {
   install(): Promise<void>;
   uninstall(): Promise<void>;
 };
-export type HarnessStatus = { harness: Harness; installed: boolean; error?: string };
-type Detectable = Harness & { available(): Promise<boolean>; entry(): Promise<unknown> };
+export type HarnessStatus = { harness: Harness; installed: boolean; current: boolean; error?: string };
+type Detectable = Harness & { available(): Promise<boolean>; entries(): Promise<unknown[]> };
 
 const name = 'mail';
 const command = [process.execPath, fileURLToPath(new URL('./cli.js', import.meta.url))];
@@ -24,6 +24,36 @@ const env = process.env.MAILMCP_CONFIG ? { MAILMCP_CONFIG: configPath() } : unde
 const stdio = { command: command[0], args: command.slice(1), ...(env && { env }) };
 const run = promisify(execFile);
 const jsonObject = z.record(z.string(), z.unknown());
+const strings = z.record(z.string(), z.string()).nullish();
+const launchSchema = z.looseObject({
+  command: z.union([z.string(), z.array(z.string())]).optional(),
+  args: z.array(z.string()).nullish(),
+  env: strings,
+  environment: strings,
+});
+
+function launch(entry: unknown): { argv: string[]; env: Record<string, string> } {
+  const codex = z.looseObject({ transport: z.unknown() }).safeParse(entry);
+  const parsed = launchSchema.safeParse(codex.success ? codex.data.transport : entry);
+  if (!parsed.success) return { argv: [], env: {} };
+  const { command: executable = [], args, env: variables, environment } = parsed.data;
+  return { argv: [executable, args ?? []].flat(), env: variables ?? environment ?? {} };
+}
+
+function owned(entry: unknown): boolean {
+  return launch(entry).argv.some(value => value === command[1] || value.includes('mailmcp'));
+}
+
+function current(entry: unknown): boolean {
+  const { argv, env: variables } = launch(entry);
+  return JSON.stringify(argv) === JSON.stringify(command) && variables.MAILMCP_CONFIG === env?.MAILMCP_CONFIG;
+}
+
+async function check(harness: Detectable): Promise<{ installed: boolean; current: boolean }> {
+  const entries = await harness.entries();
+  if (!entries.every(owned)) throw new Error(`another MCP server uses the name ${name}`);
+  return { installed: entries.length > 0, current: entries.every(current) };
+}
 
 async function exists(path: string): Promise<boolean> {
   return access(path).then(() => true, () => false);
@@ -52,7 +82,8 @@ function servers(text: string | undefined, key: string, path: string): Record<st
 }
 
 async function replaceFile(path: string, text: string): Promise<void> {
-  const target = await realpath(path).catch(() => path);
+  const link = await lstat(path).then(info => info.isSymbolicLink(), () => false);
+  const target = link ? await realpath(path).catch(() => { throw new Error(`${path} is a broken symbolic link.`); }) : path;
   const mode = await stat(target).then(info => info.mode & 0o777, () => 0o600);
   await mkdir(dirname(target), { recursive: true });
   const temporary = `${target}.${randomUUID()}.tmp`;
@@ -74,10 +105,11 @@ function jsonHarness(label: string, directory: string, paths: string[], key: str
   return {
     label, hint,
     available: () => exists(directory),
-    entry: async () => (await containing())[0]?.entry,
+    entries: async () => (await containing()).map(item => item.entry),
     install: async () => {
+      const found = (await containing()).map(item => item.path);
       const existing = await Promise.all(paths.map(exists));
-      await update(paths[existing.indexOf(true)] ?? paths[0]!, value);
+      for (const path of found.length ? found : [paths[existing.indexOf(true)] ?? paths[0]!]) await update(path, value);
     },
     uninstall: async () => {
       for (const { path } of await containing()) await update(path, undefined);
@@ -88,25 +120,29 @@ function jsonHarness(label: string, directory: string, paths: string[], key: str
 const home = homedir();
 const xdgConfig = process.env.XDG_CONFIG_HOME ?? join(home, '.config');
 const gemini = join(process.env.GEMINI_CLI_HOME ?? home, '.gemini');
+const claude = join(process.env.CLAUDE_CONFIG_DIR ?? home, '.claude.json');
 
 const harnesses: Detectable[] = [
   {
     label: 'Claude Code',
     hint: 'user scope',
     available: () => commandExists('claude'),
-    entry: async () => {
-      const path = join(process.env.CLAUDE_CONFIG_DIR ?? home, '.claude.json');
-      return servers(await readText(path), 'mcpServers', path)[name];
+    entries: async () => {
+      const entry = servers(await readText(claude), 'mcpServers', claude)[name];
+      return entry === undefined ? [] : [entry];
     },
-    install: async () => { await run('claude', ['mcp', 'add-json', '--scope', 'user', name, JSON.stringify({ type: 'stdio', ...stdio })]); },
+    install: async () => {
+      if (name in servers(await readText(claude), 'mcpServers', claude)) await run('claude', ['mcp', 'remove', '--scope', 'user', name]);
+      await run('claude', ['mcp', 'add-json', '--scope', 'user', name, JSON.stringify({ type: 'stdio', ...stdio })]);
+    },
     uninstall: async () => { await run('claude', ['mcp', 'remove', '--scope', 'user', name]); },
   },
   {
     label: 'Codex',
     available: () => commandExists('codex'),
-    entry: async () => {
+    entries: async () => {
       const { stdout } = await run('codex', ['mcp', 'list', '--json']);
-      return z.array(z.looseObject({ name: z.string() })).parse(JSON.parse(stdout)).find(server => server.name === name);
+      return z.array(z.looseObject({ name: z.string() })).parse(JSON.parse(stdout)).filter(server => server.name === name);
     },
     install: async () => {
       const options = env ? ['--env', `MAILMCP_CONFIG=${env.MAILMCP_CONFIG}`] : [];
@@ -124,17 +160,17 @@ const harnesses: Detectable[] = [
 ];
 
 export async function harnessStatus(): Promise<HarnessStatus[]> {
-  const statuses = await Promise.all(harnesses.map(async harness => {
-    if (!await harness.available()) return undefined;
+  const statuses = await Promise.all(harnesses.map(async detectable => {
+    if (!await detectable.available()) return undefined;
+    const harness: Harness = {
+      label: detectable.label, hint: detectable.hint,
+      install: async () => { await check(detectable); await detectable.install(); },
+      uninstall: async () => { await check(detectable); await detectable.uninstall(); },
+    };
     try {
-      const entry = await harness.entry();
-      const text = JSON.stringify(entry) ?? '';
-      if (entry !== undefined && !text.includes('mailmcp') && !text.includes(JSON.stringify(command[1]).slice(1, -1))) {
-        return { harness, installed: false, error: `another MCP server uses the name ${name}` };
-      }
-      return { harness, installed: entry !== undefined };
+      return { harness, ...await check(detectable) };
     } catch (error) {
-      return { harness, installed: false, error: error instanceof Error ? error.message : String(error) };
+      return { harness, installed: false, current: false, error: error instanceof Error ? error.message : String(error) };
     }
   }));
   return statuses.filter(status => status !== undefined);

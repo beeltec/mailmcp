@@ -60,11 +60,15 @@ export async function setup(): Promise<void> {
     if (!usable.length) throw new Error(`No mailboxes found for ${account.name}. Configuration was not changed.`);
     let trash = detectTrash(usable, trashNames);
     if (trash) log.info(`Trash for ${account.name}: ${trash.join(' / ')} (automatically detected)`);
-    else trash = answer(await select({
-      message: `Which mailbox is Trash for ${account.name}?`,
-      options: usable.map(mailbox => ({ value: mailbox.path, label: mailbox.path.join(' / ') })),
-      maxItems: 15,
-    }));
+    else {
+      const saved = JSON.stringify(current?.accounts.find(item => item.id === account.id)?.trash);
+      trash = answer(await select({
+        message: `Which mailbox is Trash for ${account.name}?`,
+        options: usable.map(mailbox => ({ value: mailbox.path, label: mailbox.path.join(' / ') })),
+        initialValue: usable.find(mailbox => JSON.stringify(mailbox.path) === saved)?.path ?? usable[0]!.path,
+        maxItems: 15,
+      }));
+    }
     selected.push({ id: account.id, email, trash });
   }
   const tools = answer(await groupMultiselect({
@@ -87,24 +91,25 @@ async function manageHarnesses(): Promise<void> {
   }
   const chosen = answer(await multiselect({
     message: 'Install the MCP server in which harnesses? Unselect a harness to uninstall.',
-    options: statuses.map(({ harness, installed, error }) => ({
+    options: statuses.map(({ harness, installed, current, error }) => ({
       value: harness.label, label: harness.label, disabled: error !== undefined,
-      hint: [error ?? (installed ? 'installed' : 'not installed'), harness.hint].filter(Boolean).join(', '),
+      hint: [error ?? (installed ? 'installed' : 'not installed'), installed && !current && 'outdated', harness.hint].filter(Boolean).join(', '),
     })),
     initialValues: statuses.filter(status => status.installed).map(status => status.harness.label),
     required: false,
   }));
   const install = statuses.filter(status => !status.error && !status.installed && chosen.includes(status.harness.label));
+  const refresh = statuses.filter(status => !status.error && status.installed && !status.current && chosen.includes(status.harness.label));
   const uninstall = statuses.filter(status => !status.error && status.installed && !chosen.includes(status.harness.label));
-  if (!install.length && !uninstall.length) return;
+  if (!install.length && !refresh.length && !uninstall.length) return;
   if (uninstall.length && !answer(await confirm({
     message: `Uninstall the MCP server from ${uninstall.map(status => status.harness.label).join(', ')}?`,
   }))) uninstall.length = 0;
   const failed: string[] = [];
-  for (const [action, list] of [['Installed in', install], ['Uninstalled from', uninstall]] as const) {
+  for (const [action, list] of [['Installed in', install], ['Updated in', refresh], ['Uninstalled from', uninstall]] as const) {
     for (const { harness } of list) {
       try {
-        await (action === 'Installed in' ? harness.install() : harness.uninstall());
+        await (action === 'Uninstalled from' ? harness.uninstall() : harness.install());
         log.success(`${action} ${harness.label}`);
       } catch (error) {
         failed.push(harness.label);
