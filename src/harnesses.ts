@@ -4,7 +4,7 @@ import { access, lstat, mkdir, readFile, realpath, rename, stat, writeFile } fro
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
+import { isDeepStrictEqual, promisify } from 'node:util';
 import { applyEdits, modify, parse, type ParseError } from 'jsonc-parser';
 import { parse as parseToml, patch as patchToml } from '@decimalturn/toml-patch';
 import { z } from 'zod';
@@ -199,7 +199,7 @@ function codexProject(path: string): Detectable {
       patched = patchToml(text, updated);
       const result = jsonObject.parse(parseToml(patched));
       const entry = codexServers(result, path)[name];
-      if (JSON.stringify(others(result)) !== JSON.stringify(rest) || (remove ? entry !== undefined : !current(entry))) throw new Error();
+      if (!isDeepStrictEqual(others(result), rest) || (remove ? entry !== undefined : !current(entry))) throw new Error();
     } catch {
       throw new Error(`Cannot update ${path}. Change it manually.`);
     }
