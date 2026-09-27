@@ -6,7 +6,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { applyEdits, modify, parse, type ParseError } from 'jsonc-parser';
-import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
+import { parse as parseToml, patch as patchToml } from '@decimalturn/toml-patch';
 import { z } from 'zod';
 import { configPath } from './config.js';
 
@@ -162,25 +162,6 @@ async function codex(args: string[]): Promise<string> {
   return (await run('codex', ['mcp', ...args], { cwd: tmpdir() })).stdout;
 }
 
-const tomlKey = `(?:[\\w-]+|"[^"]*"|'[^']*')`;
-const tomlLine = new RegExp(`^\\s*(\\[{1,2})?\\s*(${tomlKey}(?:\\s*\\.\\s*${tomlKey})*)\\s*(?:\\]{1,2}|=)`);
-
-function tomlPath(key: string): string[] {
-  return [...key.matchAll(new RegExp(tomlKey, 'g'))].map(([segment]) => segment.replace(/^["']|["']$/g, ''));
-}
-
-// Remove the lines that define this MCP server: its tables and its keys in other tables.
-function withoutServer(text: string): string {
-  const server = (path: string[]) => path[0] === 'mcp_servers' && path[1] === name;
-  let table: string[] = [];
-  return text.split('\n').filter(line => {
-    const match = tomlLine.exec(line);
-    if (match?.[1]) table = tomlPath(match[2]!);
-    else if (match) return !server([...table, ...tomlPath(match[2]!)]);
-    return !server(table);
-  }).join('\n');
-}
-
 function codexServers(config: Record<string, unknown>, path: string): Record<string, unknown> {
   const entries = jsonObject.optional().safeParse(config.mcp_servers);
   if (!entries.success) throw new Error(`mcp_servers in ${path} is not a table.`);
@@ -188,7 +169,6 @@ function codexServers(config: Record<string, unknown>, path: string): Record<str
 }
 
 // Codex has no project scope option, so edit the project file directly.
-// Other settings stay unchanged, because the edit only replaces the lines of this MCP server.
 function codexProject(path: string): Detectable {
   async function read(): Promise<{ text: string; config: Record<string, unknown> }> {
     const text = await readText(path) ?? '';
@@ -198,33 +178,32 @@ function codexProject(path: string): Detectable {
       throw new Error(`${path} is not valid TOML.`);
     }
   }
-  function others(config: Record<string, unknown>): string {
+  function others(config: Record<string, unknown>): Record<string, unknown> {
     const { [name]: _entry, ...rest } = codexServers(config, path);
     const { mcp_servers: _servers, ...settings } = config;
-    return JSON.stringify(Object.keys(rest).length ? { ...settings, mcp_servers: rest } : settings);
+    return Object.keys(rest).length ? { ...settings, mcp_servers: rest } : settings;
   }
   async function update(remove: boolean): Promise<void> {
     const { text, config } = await read();
-    let updated = withoutServer(text).trimEnd();
+    const rest = others(config);
+    let updated = rest;
     if (!remove) {
       const { env: variables, ...entry } = jsonObject.parse(codexServers(config, path)[name] ?? {});
       const { MAILMCP_CONFIG: _config, ...kept } = strings.parse(variables) ?? {};
       const environment = { ...kept, ...env };
       const server = { ...entry, command: command[0], args: command.slice(1), ...(Object.keys(environment).length && { env: environment }) };
-      updated = `${updated}${updated ? '\n\n' : ''}${stringifyToml({ mcp_servers: { [name]: server } })}`;
+      updated = { ...rest, mcp_servers: { ...codexServers(rest, path), [name]: server } };
     }
-    updated = updated ? `${updated.trimEnd()}\n` : '';
-    let result: Record<string, unknown> | undefined;
+    let patched: string;
     try {
-      result = jsonObject.parse(parseToml(updated));
+      patched = patchToml(text, updated);
+      const result = jsonObject.parse(parseToml(patched));
+      const entry = codexServers(result, path)[name];
+      if (JSON.stringify(others(result)) !== JSON.stringify(rest) || (remove ? entry !== undefined : !current(entry))) throw new Error();
     } catch {
-      result = undefined;
-    }
-    const entry = result && codexServers(result, path)[name];
-    if (!result || others(result) !== others(config) || (remove ? entry !== undefined : !current(entry))) {
       throw new Error(`Cannot update ${path}. Change it manually.`);
     }
-    await replaceFile(path, updated);
+    await replaceFile(path, patched.trim() ? `${patched.trimEnd()}\n` : '');
   }
   return {
     label: 'Codex',
