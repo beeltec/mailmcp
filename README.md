@@ -10,7 +10,8 @@ It uses the accounts already configured in Mail. It does not need mail passwords
 - macOS Automation permission for the process that runs the server to control Mail.
 
 Mail may open composer windows during draft operations. Run this server in your logged-in desktop session.
-It does not need Accessibility or Full Disk Access, and does not read Mail's private database.
+Folder deletion also needs Automation permission for System Events and Accessibility permission for the process running the server.
+Other operations do not need Accessibility. The server does not need Full Disk Access or read Mail's private database.
 
 ## Install from this repository
 
@@ -66,7 +67,7 @@ Composing and sending also require a sender address that belongs to exactly one 
 
 Mailbox paths contain exact names from `list_mailboxes`, not necessarily the translated names shown in Mail's sidebar.
 For nested mailboxes, use one name per path segment.
-The server uses your Trash mapping and never calls Mail's delete command.
+Message deletion uses your Trash mapping. Folder deletion uses Mail's menu controls only for empty custom folders without children.
 Mail and your provider can still expire messages in Trash according to their own settings.
 
 ### Automatic Trash detection
@@ -97,6 +98,7 @@ Microsoft also documents [Deleted Items and Trash](https://support.microsoft.com
 | Tools | Purpose |
 | --- | --- |
 | `list_accounts`, `list_mailboxes` | Discover allowed accounts and their existing mailboxes |
+| `get_mailbox`, `create_mailbox`, `rename_mailbox`, `delete_mailbox` | Inspect, create, rename, and delete empty custom folders |
 | `search_messages`, `search_mailboxes` | Search a mailbox by subject, sender, recipient, received date, and unread state |
 | `read_message`, `read_messages` | Read bounded body pages or batches and inspect attachment metadata |
 | `set_message_state` | Set read state or flag color |
@@ -130,6 +132,22 @@ Mailbox discovery uses each mailbox's actual container chain. Mail's account col
 Copy canonical paths from `list_mailboxes`. Skip entries with `ambiguous: true` and report their reason.
 Discovery reads no message collections. Search checks message access and reports per-folder errors.
 The server never selects the first of several ambiguous folders.
+
+### Folder management
+
+Use `create_mailbox` with a full path, such as `["Projects", "Invoices"]`. The parent must already exist.
+`get_mailbox` returns message and unread counts plus direct child paths.
+`rename_mailbox` changes the final name, preserving messages and children. It does not move folders between parents.
+Refresh discovery and message references after renaming a folder or its parent.
+Names cannot contain slashes, control characters, or surrounding spaces. Existing paths are rejected, ignoring case and Unicode composition.
+Assigned system folders, configured Trash, their parents, and common Archive/Notes folders cannot be renamed or deleted.
+`delete_mailbox` uses Mail’s Delete Mailbox menu because its scripting delete command fails for server folders.
+It checks the selected account, exact path, and empty state before confirming. An unexpected dialog stops the operation.
+Allow Accessibility for the server host in macOS System Settings. Keep a Mail viewer open and close other Mail dialogs.
+Do not interact with Mail while deletion runs.
+`delete_mailbox` refuses folders with messages or children. Move mail out and delete empty children first.
+Mail and remote synchronization can change folder contents between checks; pause other sorting activity during deletion.
+After a timeout or uncertain write, inspect the folder before retrying.
 
 ### Mail analysis workflow
 

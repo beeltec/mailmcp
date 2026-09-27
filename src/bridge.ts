@@ -17,7 +17,7 @@ export async function callMail(
 ): Promise<unknown> {
   if (process.platform !== 'darwin') throw new Error('mailmcp requires macOS and Apple Mail.');
   signal?.throwIfAborted();
-  const readOnly = ['discover_accounts', 'account_info', 'list_mailboxes', 'setup_mailboxes', 'search_messages', 'search_mailboxes', 'read_message', 'read_messages', 'get_draft'].includes(operation);
+  const readOnly = ['discover_accounts', 'account_info', 'list_mailboxes', 'get_mailbox', 'setup_mailboxes', 'search_messages', 'search_mailboxes', 'read_message', 'read_messages', 'get_draft'].includes(operation);
   return new Promise((resolve, reject) => {
     const child = spawn('/usr/bin/osascript', ['-l', 'JavaScript', script], { stdio: ['pipe', 'pipe', 'pipe'] });
     const chunks: Buffer[] = [];
