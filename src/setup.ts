@@ -1,5 +1,5 @@
 import { stdin } from 'node:process';
-import { confirm, groupMultiselect, intro, isCancel, log, multiselect, outro, select, spinner } from '@clack/prompts';
+import { confirm, groupMultiselect, intro, isCancel, log, multiselect, outro, select } from '@clack/prompts';
 import { z } from 'zod';
 import { callMail } from './bridge.js';
 import { configPath, loadConfig, mailboxPath, saveConfig, type AccountConfig, type Config } from './config.js';
@@ -20,24 +20,17 @@ function answer<T>(value: T): Exclude<T, symbol> {
   return value as Exclude<T, symbol>;
 }
 
-async function withSpinner<T>(message: string, task: () => Promise<T>): Promise<T> {
-  // Clack exits with status 0 when the user presses Ctrl+C during a spinner.
-  const cancelled = () => {
-    process.exitCode = 1;
-    console.error('\nSetup cancelled.');
-  };
-  process.once('exit', cancelled);
-  const progress = spinner({ onCancel: () => process.exit(1) });
-  progress.start(message);
+async function withProgress<T>(message: string, task: () => Promise<T>): Promise<T> {
+  log.step(message);
+  let cancel = () => {};
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    cancel = () => reject(new Cancelled('Setup cancelled.'));
+  });
+  process.once('SIGINT', cancel);
   try {
-    const result = await task();
-    progress.stop(message);
-    return result;
-  } catch (error) {
-    progress.error(message);
-    throw error;
+    return await Promise.race([task(), cancelled]);
   } finally {
-    process.off('exit', cancelled);
+    process.off('SIGINT', cancel);
   }
 }
 
@@ -87,7 +80,7 @@ async function save(config: Config): Promise<Config> {
 }
 
 async function selectAccounts(current: Config | undefined): Promise<AccountConfig[]> {
-  const accounts = accountsSchema.parse(await withSpinner('Reading Mail accounts', () => callMail('discover_accounts')));
+  const accounts = accountsSchema.parse(await withProgress('Reading Mail accounts', () => callMail('discover_accounts')));
   if (!accounts.length) throw new Error('No Mail accounts found. Configure Apple Mail first.');
   const ids = answer(await multiselect({
     message: 'Which accounts can the MCP server use? Press A to select all.',
@@ -107,7 +100,7 @@ async function selectAccounts(current: Config | undefined): Promise<AccountConfi
     if (!email) throw new Error(`${account.name} has no email address. Configuration was not changed.`);
     const partial = { id: account.id, email, trash: ['pending'] };
     const { mailboxes, trashNames } = setupMailboxesSchema.parse(
-      await withSpinner(`Reading mailboxes of ${account.name}`, () => callMail('setup_mailboxes', {}, partial)));
+      await withProgress(`Reading mailboxes of ${account.name}`, () => callMail('setup_mailboxes', {}, partial)));
     const usable = mailboxes.filter(mailbox => !mailbox.ambiguous);
     if (!usable.length) throw new Error(`No mailboxes found for ${account.name}. Configuration was not changed.`);
     let trash = detectTrash(usable, trashNames);
@@ -137,7 +130,7 @@ async function selectTools(initialValues: ToolName[]): Promise<ToolName[]> {
 }
 
 async function manageHarnesses(): Promise<void> {
-  const statuses = await withSpinner('Looking for harnesses', harnessStatus);
+  const statuses = await withProgress('Looking for harnesses', harnessStatus);
   if (!statuses.length) {
     log.warn('No supported harness found. Add the MCP server to your client manually.');
     return;
