@@ -161,12 +161,12 @@ async function installClaude(): Promise<void> {
   }
 }
 
-async function codex(args: string[]): Promise<string> {
-  return (await run('codex', ['mcp', ...args], { cwd: tmpdir() })).stdout;
+async function codex(args: string[], cwd = tmpdir()): Promise<string> {
+  return (await run('codex', ['mcp', ...args], { cwd })).stdout;
 }
 
-async function codexEntries(): Promise<unknown[]> {
-  const list = z.array(z.looseObject({ name: z.string() })).parse(JSON.parse(await codex(['list', '--json'])));
+async function codexEntries(cwd?: string): Promise<unknown[]> {
+  const list = z.array(z.looseObject({ name: z.string() })).parse(JSON.parse(await codex(['list', '--json'], cwd)));
   return list.filter(server => server.name === name);
 }
 
@@ -181,7 +181,8 @@ function codexServers(config: Record<string, unknown>, path: string): Record<str
 }
 
 // Codex has no project scope option, so edit the project file directly.
-function codexProject(path: string, configFile: string): Detectable {
+function codexProject(root: string, configFile: string): Detectable {
+  const path = join(root, '.codex', 'config.toml');
   async function read(): Promise<{ text: string; config: Record<string, unknown> }> {
     const text = await readText(path) ?? '';
     try {
@@ -227,8 +228,8 @@ function codexProject(path: string, configFile: string): Detectable {
     locations: async () => [path],
     entries: async () => {
       const entry = codexServers((await read()).config, path)[name];
-      // Codex merges the user entry into the project entry, so another user server with this name also blocks it.
-      const inherited = (await codexEntries()).filter(item => !owned(item));
+      // Codex merges the user and parent project entries into this entry, so another server with this name also blocks it.
+      const inherited = (await codexEntries(root)).filter(item => !owned(item));
       return [...entry === undefined ? [] : [entry], ...inherited];
     },
     install: () => update(false),
@@ -257,7 +258,7 @@ function detectables(scope: Scope, root: string): Detectable[] {
   if (scope === 'project') return [
     jsonHarness('Claude Code', hasClaude, [join(root, '.mcp.json')], 'mcpServers', stdioEdits,
       { hint: 'asks for approval on first start', config }),
-    codexProject(join(root, '.codex', 'config.toml'), config),
+    codexProject(root, config),
     jsonHarness('Cursor', () => exists(cursor), [join(root, '.cursor', 'mcp.json')], 'mcpServers', stdioEdits, { config }),
     jsonHarness('Gemini CLI', hasGemini, [join(root, '.gemini', 'settings.json')], 'mcpServers', stdioEdits, { config }),
     jsonHarness('opencode', hasOpencode, ['opencode.json', 'opencode.jsonc'].map(file => join(root, file)), 'mcp', opencodeEdits, { config }),
