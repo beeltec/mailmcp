@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { toolNames } from './tools.js';
 
 export const mailboxPath = z.array(z.string().min(1).max(512)).min(1).max(30);
 export const accountConfig = z.strictObject({
@@ -15,6 +16,7 @@ export const configSchema = z.strictObject({
     accounts => new Set(accounts.map(account => account.id)).size === accounts.length,
     'Account identifiers must be unique.',
   ),
+  tools: z.array(z.enum(toolNames)).optional(),
 });
 export type Config = z.infer<typeof configSchema>;
 export type AccountConfig = z.infer<typeof accountConfig>;

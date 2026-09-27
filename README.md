@@ -24,22 +24,48 @@ mailmcp setup
 The repository is currently private. The package is prepared for npm distribution but has not been published.
 `npm pack` creates an installable archive. Once published, users can install a pinned package version through npm.
 
-Setup lists account names and addresses. Select the accounts to allow; Trash mailboxes are detected automatically.
-Enter `All` to select every listed account, or enter account numbers separated by commas.
-`All` is case-insensitive and accepts surrounding spaces. Accounts with multiple sender addresses still ask which address to use.
-Setup asks you to select a Trash mailbox only when it cannot identify one unambiguously.
+Setup is an interactive terminal wizard. Use the arrow keys to move, Space to select, and Enter to confirm.
+Setup shows your current choices as defaults.
+
+1. Select the accounts to allow. Press `A` to select all accounts.
+   Accounts with multiple sender addresses ask which address to use.
+2. Setup detects Trash mailboxes automatically.
+   It asks you to select a Trash mailbox only when it cannot identify one unambiguously.
+3. Select the tools the server offers. `list_accounts` is always on.
+4. Select the harnesses that use the server. Setup shows where the server is already installed.
+   Select a harness to install the server. Unselect it to uninstall the server after a confirmation.
+
 Only setup can discover unconfigured accounts. MCP tools cannot change the allowlist.
+Press Ctrl+C to cancel. Setup saves the configuration before the harness step.
 
-## Connect Codex
+## Connect harnesses
 
-Use an absolute executable path so Codex can find your Node installation:
+Setup installs the server with the name `mail`, the absolute Node path, and the absolute path of `dist/cli.js`.
+It shows only harnesses it finds on this Mac:
+
+| Harness | Detection | Configuration |
+| --- | --- | --- |
+| Claude Code | `claude` command | `claude mcp add --scope user` (`~/.claude.json`) |
+| Codex | `codex` command | `codex mcp add`, global scope (`~/.codex/config.toml`) |
+| Cursor | `~/.cursor` | `~/.cursor/mcp.json` |
+| Gemini CLI | `~/.gemini` (or `$GEMINI_CLI_HOME/.gemini`) | `settings.json` in that folder |
+| opencode | `~/.config/opencode` | `opencode.json`, `opencode.jsonc`, or `config.json` in that folder |
+| pi | `~/.pi/agent` | `~/.config/mcp/mcp.json` |
+
+pi needs the MCP adapter. Install it with `pi install npm:pi-mcp-adapter`.
+Setup keeps the other entries, comments, and formatting in these files.
+If another server already uses the name `mail`, setup shows the conflict and does not change that harness.
+When `MAILMCP_CONFIG` is set during setup, the installed entries pass the same path to the server.
+Setup marks an entry as outdated when its Node path, server path, or `MAILMCP_CONFIG` differs. Keep the harness selected to update the entry.
+Updates change only these values and keep other settings, such as tool filters and timeouts.
+Setup cannot update a Codex entry without losing its other settings. Uninstall it and install it again instead.
+Restart the harness or its MCP connection after installation or configuration changes.
+
+To add the server manually, use an absolute executable path so the harness can find your Node installation:
 
 ```sh
 codex mcp add mail -- /absolute/path/to/node /absolute/path/to/mailmcp/dist/cli.js
 ```
-
-Restart the Codex MCP connection after installation or configuration changes.
-The [Codex MCP documentation](https://developers.openai.com/codex/mcp) describes client configuration.
 
 ## Change allowed accounts
 
@@ -54,9 +80,12 @@ You can also edit `~/.config/mailmcp/config.json`:
       "email": "you@example.com",
       "trash": ["Trash"]
     }
-  ]
+  ],
+  "tools": ["list_mailboxes", "search_messages", "read_message"]
 }
 ```
+
+`tools` lists the enabled tools. `list_accounts` is always enabled. Without `tools`, all tools are enabled.
 
 Set `MAILMCP_CONFIG` to an absolute path to use a different file.
 Restart the server to apply changes. Removed accounts remain accessible to an already running connection until it restarts.
