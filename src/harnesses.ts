@@ -162,7 +162,24 @@ async function codex(args: string[]): Promise<string> {
   return (await run('codex', ['mcp', ...args], { cwd: tmpdir() })).stdout;
 }
 
-const mailTable = new RegExp(`^\\s*\\[\\s*mcp_servers\\s*\\.\\s*("${name}"|'${name}'|${name})\\s*(\\..*)?\\]\\s*(#.*)?$`);
+const tomlKey = `(?:[\\w-]+|"[^"]*"|'[^']*')`;
+const tomlLine = new RegExp(`^\\s*(\\[{1,2})?\\s*(${tomlKey}(?:\\s*\\.\\s*${tomlKey})*)\\s*(?:\\]{1,2}|=)`);
+
+function tomlPath(key: string): string[] {
+  return [...key.matchAll(new RegExp(tomlKey, 'g'))].map(([segment]) => segment.replace(/^["']|["']$/g, ''));
+}
+
+// Remove the lines that define this MCP server: its tables and its keys in other tables.
+function withoutServer(text: string): string {
+  const server = (path: string[]) => path[0] === 'mcp_servers' && path[1] === name;
+  let table: string[] = [];
+  return text.split('\n').filter(line => {
+    const match = tomlLine.exec(line);
+    if (match?.[1]) table = tomlPath(match[2]!);
+    else if (match) return !server([...table, ...tomlPath(match[2]!)]);
+    return !server(table);
+  }).join('\n');
+}
 
 function codexServers(config: Record<string, unknown>, path: string): Record<string, unknown> {
   const entries = jsonObject.optional().safeParse(config.mcp_servers);
@@ -171,7 +188,7 @@ function codexServers(config: Record<string, unknown>, path: string): Record<str
 }
 
 // Codex has no project scope option, so edit the project file directly.
-// Other tables stay unchanged, because the edit only replaces the tables of this MCP server.
+// Other settings stay unchanged, because the edit only replaces the lines of this MCP server.
 function codexProject(path: string): Detectable {
   async function read(): Promise<{ text: string; config: Record<string, unknown> }> {
     const text = await readText(path) ?? '';
@@ -188,11 +205,7 @@ function codexProject(path: string): Detectable {
   }
   async function update(remove: boolean): Promise<void> {
     const { text, config } = await read();
-    let table = false;
-    let updated = text.split('\n').filter(line => {
-      if (/^\s*\[/.test(line)) table = mailTable.test(line);
-      return !table;
-    }).join('\n').trimEnd();
+    let updated = withoutServer(text).trimEnd();
     if (!remove) {
       const { env: variables, ...entry } = jsonObject.parse(codexServers(config, path)[name] ?? {});
       const { MAILMCP_CONFIG: _config, ...kept } = strings.parse(variables) ?? {};
