@@ -5,7 +5,7 @@ import { confirm, groupMultiselect, intro, isCancel, log, multiselect, note, out
 import { z } from 'zod';
 import { callMail } from './bridge.js';
 import { configPath, loadConfig, mailboxPath, saveConfig, type AccountConfig, type Config } from './config.js';
-import { harnessStatus, type Scope } from './harnesses.js';
+import { harnessStatus, type Harness, type HarnessStatus, type Scope } from './harnesses.js';
 import { destructiveTools, toolGroups, toolNames, type ToolName } from './tools.js';
 import { detectTrash } from './trash.js';
 
@@ -137,6 +137,10 @@ function displayPath(path: string, scope: Scope): string {
   return path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
 }
 
+function displayLocations(harness: Harness, scope: Scope): string {
+  return harness.locations.map(path => displayPath(path, scope)).join(', ');
+}
+
 async function manageHarnesses(): Promise<void> {
   const root = cwd();
   const inHome = root === homedir();
@@ -159,7 +163,7 @@ async function manageHarnesses(): Promise<void> {
       hint: [
         error ?? (installed ? 'installed' : 'not installed'),
         installed && !current && (harness.update ? 'outdated' : 'outdated, reinstall to update'),
-        displayPath(harness.location, scope), harness.hint,
+        displayLocations(harness, scope), harness.hint,
       ].filter(Boolean).join(', '),
     })),
     initialValues: statuses.filter(status => status.installed).map(status => status.harness.label),
@@ -168,20 +172,21 @@ async function manageHarnesses(): Promise<void> {
   const selected = statuses.filter(status => !status.error && chosen.includes(status.harness.label));
   const install = selected.filter(status => !status.installed);
   const refresh = selected.filter(status => status.installed && !status.current && status.harness.update);
-  const unselected = statuses.filter(status => !status.error && status.installed && !chosen.includes(status.harness.label));
-  const sharing = (location: string) => selected.find(status => status.harness.location === location)?.harness.label;
-  const kept = unselected.filter(status => sharing(status.harness.location));
-  const uninstall = unselected.filter(status => !kept.includes(status));
+  const unselected = statuses.filter(status => !status.error && !chosen.includes(status.harness.label));
+  const sharing = ({ harness }: HarnessStatus) =>
+    selected.find(other => other.harness.locations.some(path => harness.locations.includes(path)))?.harness.label;
+  const shared = unselected.filter(sharing);
+  const uninstall = unselected.filter(status => status.installed && !shared.includes(status));
   if (!install.length && !refresh.length && !uninstall.length) {
-    for (const { harness } of kept) log.info(`${harness.label} stays installed because ${sharing(harness.location)} uses the same file.`);
+    for (const status of shared) log.info(`${status.harness.label} stays installed because ${sharing(status)} uses the same file.`);
     log.info('Nothing to change.');
     return;
   }
   const rows = [
-    ...install.map(status => ['Install', status.harness.label, displayPath(status.harness.location, scope)]),
-    ...refresh.map(status => ['Update', status.harness.label, displayPath(status.harness.location, scope)]),
-    ...uninstall.map(status => ['Uninstall', status.harness.label, displayPath(status.harness.location, scope)]),
-    ...kept.map(status => ['Keep', status.harness.label, `${sharing(status.harness.location)} uses the same file`]),
+    ...install.map(status => ['Install', status.harness.label, displayLocations(status.harness, scope)]),
+    ...refresh.map(status => ['Update', status.harness.label, displayLocations(status.harness, scope)]),
+    ...uninstall.map(status => ['Uninstall', status.harness.label, displayLocations(status.harness, scope)]),
+    ...shared.map(status => [status.installed ? 'Keep' : 'Install', status.harness.label, `${sharing(status)} uses the same file`]),
   ];
   const widths = [0, 1].map(column => Math.max(...rows.map(row => row[column]!.length)));
   note(rows.map(([action, label, detail]) => `${action!.padEnd(widths[0]!)}  ${label!.padEnd(widths[1]!)}  ${detail}`).join('\n'),

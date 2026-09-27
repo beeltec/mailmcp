@@ -1,11 +1,12 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { access, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { applyEdits, modify, parse, type ParseError } from 'jsonc-parser';
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { z } from 'zod';
 import { configPath } from './config.js';
 
@@ -13,13 +14,13 @@ export type Scope = 'user' | 'project';
 export type Harness = {
   label: string;
   hint?: string | undefined;
-  location: string;
+  locations: string[];
   install(): Promise<void>;
   update?: (() => Promise<void>) | undefined;
   uninstall(): Promise<void>;
 };
 export type HarnessStatus = { harness: Harness; installed: boolean; current: boolean; error?: string };
-type Detectable = Omit<Harness, 'location'> & { available(): Promise<boolean>; location(): Promise<string>; entries(): Promise<unknown[]> };
+type Detectable = Omit<Harness, 'locations'> & { available(): Promise<boolean>; locations(): Promise<string[]>; entries(): Promise<unknown[]> };
 
 const name = 'mail';
 const command = [process.execPath, fileURLToPath(new URL('./cli.js', import.meta.url))];
@@ -136,7 +137,7 @@ function jsonHarness(
   }
   return {
     label, hint, install, update: install, available,
-    location: () => targets().then(found => found[0]!, () => paths[0]!),
+    locations: () => targets().catch(() => [paths[0]!]),
     entries: async () => (await containing()).map(item => item.entry),
     uninstall: async () => {
       for (const { path } of await containing()) await update(path, true);
@@ -157,16 +158,74 @@ async function installClaude(): Promise<void> {
   }
 }
 
-async function codex(args: string[], project?: string): Promise<string> {
-  if (!project) return (await run('codex', ['mcp', ...args], { cwd: tmpdir() })).stdout;
-  // Codex has no project scope option. Use a temporary CODEX_HOME that links to the project configuration.
-  const temporary = await mkdtemp(join(tmpdir(), 'mailmcp-codex-'));
-  try {
-    await symlink(project, join(temporary, 'config.toml'));
-    return (await run('codex', ['mcp', ...args], { cwd: tmpdir(), env: { ...process.env, CODEX_HOME: temporary } })).stdout;
-  } finally {
-    await rm(temporary, { recursive: true, force: true });
+async function codex(args: string[]): Promise<string> {
+  return (await run('codex', ['mcp', ...args], { cwd: tmpdir() })).stdout;
+}
+
+const mailTable = new RegExp(`^\\s*\\[\\s*mcp_servers\\s*\\.\\s*("${name}"|'${name}'|${name})\\s*(\\..*)?\\]\\s*(#.*)?$`);
+
+function codexServers(config: Record<string, unknown>, path: string): Record<string, unknown> {
+  const entries = jsonObject.optional().safeParse(config.mcp_servers);
+  if (!entries.success) throw new Error(`mcp_servers in ${path} is not a table.`);
+  return entries.data ?? {};
+}
+
+// Codex has no project scope option, so edit the project file directly.
+// Other tables stay unchanged, because the edit only replaces the tables of this MCP server.
+function codexProject(path: string): Detectable {
+  async function read(): Promise<{ text: string; config: Record<string, unknown> }> {
+    const text = await readText(path) ?? '';
+    try {
+      return { text, config: jsonObject.parse(parseToml(text)) };
+    } catch {
+      throw new Error(`${path} is not valid TOML.`);
+    }
   }
+  function others(config: Record<string, unknown>): string {
+    const { [name]: _entry, ...rest } = codexServers(config, path);
+    const { mcp_servers: _servers, ...settings } = config;
+    return JSON.stringify(Object.keys(rest).length ? { ...settings, mcp_servers: rest } : settings);
+  }
+  async function update(remove: boolean): Promise<void> {
+    const { text, config } = await read();
+    let table = false;
+    let updated = text.split('\n').filter(line => {
+      if (/^\s*\[/.test(line)) table = mailTable.test(line);
+      return !table;
+    }).join('\n').trimEnd();
+    if (!remove) {
+      const { env: variables, ...entry } = jsonObject.parse(codexServers(config, path)[name] ?? {});
+      const { MAILMCP_CONFIG: _config, ...kept } = strings.parse(variables) ?? {};
+      const environment = { ...kept, ...env };
+      const server = { ...entry, command: command[0], args: command.slice(1), ...(Object.keys(environment).length && { env: environment }) };
+      updated = `${updated}${updated ? '\n\n' : ''}${stringifyToml({ mcp_servers: { [name]: server } })}`;
+    }
+    updated = updated ? `${updated.trimEnd()}\n` : '';
+    let result: Record<string, unknown> | undefined;
+    try {
+      result = jsonObject.parse(parseToml(updated));
+    } catch {
+      result = undefined;
+    }
+    const entry = result && codexServers(result, path)[name];
+    if (!result || others(result) !== others(config) || (remove ? entry !== undefined : !current(entry))) {
+      throw new Error(`Cannot update ${path}. Change it manually.`);
+    }
+    await replaceFile(path, updated);
+  }
+  return {
+    label: 'Codex',
+    hint: 'trusted projects only',
+    available: () => commandExists('codex'),
+    locations: async () => [path],
+    entries: async () => {
+      const entry = codexServers((await read()).config, path)[name];
+      return entry === undefined ? [] : [entry];
+    },
+    install: () => update(false),
+    update: () => update(false),
+    uninstall: () => update(true),
+  };
 }
 
 const home = homedir();
@@ -178,23 +237,6 @@ const cursor = join(home, '.cursor');
 const opencode = join(xdgConfig, 'opencode');
 const pi = process.env.PI_CODING_AGENT_DIR ?? join(home, '.pi', 'agent');
 
-function codexHarness(project?: string): Detectable {
-  return {
-    label: 'Codex',
-    hint: project && 'trusted projects only',
-    available: () => commandExists('codex'),
-    location: async () => project ?? join(process.env.CODEX_HOME ?? join(home, '.codex'), 'config.toml'),
-    entries: async () => {
-      const list = z.array(z.looseObject({ name: z.string() })).parse(JSON.parse(await codex(['list', '--json'], project)));
-      return list.filter(server => server.name === name);
-    },
-    install: async () => {
-      await codex(['add', name, ...(env ? ['--env', `MAILMCP_CONFIG=${env.MAILMCP_CONFIG}`] : []), '--', ...command], project);
-    },
-    uninstall: async () => { await codex(['remove', name], project); },
-  };
-}
-
 function detectables(scope: Scope, root: string): Detectable[] {
   const hasClaude = () => commandExists('claude');
   const hasGemini = () => exists(gemini);
@@ -203,7 +245,7 @@ function detectables(scope: Scope, root: string): Detectable[] {
   const piHint = 'requires pi-mcp-adapter';
   if (scope === 'project') return [
     jsonHarness('Claude Code', hasClaude, [join(root, '.mcp.json')], 'mcpServers', stdioEdits, 'asks for approval on first start'),
-    codexHarness(join(root, '.codex', 'config.toml')),
+    codexProject(join(root, '.codex', 'config.toml')),
     jsonHarness('Cursor', () => exists(cursor), [join(root, '.cursor', 'mcp.json')], 'mcpServers', stdioEdits),
     jsonHarness('Gemini CLI', hasGemini, [join(root, '.gemini', 'settings.json')], 'mcpServers', stdioEdits),
     jsonHarness('opencode', hasOpencode, ['opencode.json', 'opencode.jsonc'].map(file => join(root, file)), 'mcp', opencodeEdits),
@@ -213,7 +255,7 @@ function detectables(scope: Scope, root: string): Detectable[] {
     {
       label: 'Claude Code',
       available: hasClaude,
-      location: async () => claude,
+      locations: async () => [claude],
       entries: async () => {
         const entry = servers(await readText(claude), 'mcpServers', claude)[name];
         return entry === undefined ? [] : [entry];
@@ -222,7 +264,17 @@ function detectables(scope: Scope, root: string): Detectable[] {
       update: installClaude,
       uninstall: async () => { await run('claude', ['mcp', 'remove', '--scope', 'user', name]); },
     },
-    codexHarness(),
+    {
+      label: 'Codex',
+      available: () => commandExists('codex'),
+      locations: async () => [join(process.env.CODEX_HOME ?? join(home, '.codex'), 'config.toml')],
+      entries: async () => {
+        const list = z.array(z.looseObject({ name: z.string() })).parse(JSON.parse(await codex(['list', '--json'])));
+        return list.filter(server => server.name === name);
+      },
+      install: async () => { await codex(['add', name, ...(env ? ['--env', `MAILMCP_CONFIG=${env.MAILMCP_CONFIG}`] : []), '--', ...command]); },
+      uninstall: async () => { await codex(['remove', name]); },
+    },
     jsonHarness('Cursor', () => exists(cursor), [join(cursor, 'mcp.json')], 'mcpServers', stdioEdits),
     jsonHarness('Gemini CLI', hasGemini, [join(gemini, 'settings.json')], 'mcpServers', stdioEdits),
     jsonHarness('opencode', hasOpencode,
@@ -236,7 +288,7 @@ export async function harnessStatus(scope: Scope, root: string): Promise<Harness
     if (!await detectable.available()) return undefined;
     const { update } = detectable;
     const harness: Harness = {
-      label: detectable.label, hint: detectable.hint, location: await detectable.location(),
+      label: detectable.label, hint: detectable.hint, locations: await detectable.locations(),
       install: async () => { await check(detectable); await detectable.install(); },
       update: update && (async () => { await check(detectable); await update(); }),
       uninstall: async () => { await check(detectable); await detectable.uninstall(); },
