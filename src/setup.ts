@@ -19,7 +19,13 @@ function answer<T>(value: T): Exclude<T, symbol> {
 }
 
 async function withSpinner<T>(message: string, task: () => Promise<T>): Promise<T> {
-  const progress = spinner({ cancelMessage: 'Setup cancelled.', onCancel: () => process.exit(1) });
+  // Clack exits with status 0 when the user presses Ctrl+C during a spinner.
+  const cancelled = () => {
+    process.exitCode = 1;
+    console.error('\nSetup cancelled.');
+  };
+  process.once('exit', cancelled);
+  const progress = spinner({ onCancel: () => process.exit(1) });
   progress.start(message);
   try {
     const result = await task();
@@ -28,6 +34,8 @@ async function withSpinner<T>(message: string, task: () => Promise<T>): Promise<
   } catch (error) {
     progress.error(message);
     throw error;
+  } finally {
+    process.off('exit', cancelled);
   }
 }
 

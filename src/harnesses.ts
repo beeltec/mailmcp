@@ -140,8 +140,14 @@ function jsonHarness(
 async function installClaude(): Promise<void> {
   const entry = servers(await readText(claude), 'mcpServers', claude)[name];
   const json = edit(JSON.stringify(entry ?? { type: 'stdio' }), [], stdioEdits(entry));
+  const add = (value: string) => run('claude', ['mcp', 'add-json', '--scope', 'user', name, value]);
   if (entry !== undefined) await run('claude', ['mcp', 'remove', '--scope', 'user', name]);
-  await run('claude', ['mcp', 'add-json', '--scope', 'user', name, json]);
+  try {
+    await add(json);
+  } catch (error) {
+    if (entry !== undefined) await add(JSON.stringify(entry));
+    throw error;
+  }
 }
 
 async function codex(args: string[]): Promise<string> {
