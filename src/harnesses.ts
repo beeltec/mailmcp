@@ -165,6 +165,11 @@ async function codex(args: string[]): Promise<string> {
   return (await run('codex', ['mcp', ...args], { cwd: tmpdir() })).stdout;
 }
 
+async function codexEntries(): Promise<unknown[]> {
+  const list = z.array(z.looseObject({ name: z.string() })).parse(JSON.parse(await codex(['list', '--json'])));
+  return list.filter(server => server.name === name);
+}
+
 function isTable(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) && !(value instanceof Date);
 }
@@ -222,7 +227,9 @@ function codexProject(path: string, configFile: string): Detectable {
     locations: async () => [path],
     entries: async () => {
       const entry = codexServers((await read()).config, path)[name];
-      return entry === undefined ? [] : [entry];
+      // Codex merges the user entry into the project entry, so another user server with this name also blocks it.
+      const inherited = (await codexEntries()).filter(item => !owned(item));
+      return [...entry === undefined ? [] : [entry], ...inherited];
     },
     install: () => update(false),
     update: () => update(false),
@@ -273,10 +280,7 @@ function detectables(scope: Scope, root: string): Detectable[] {
       label: 'Codex',
       available: () => commandExists('codex'),
       locations: async () => [join(process.env.CODEX_HOME ?? join(home, '.codex'), 'config.toml')],
-      entries: async () => {
-        const list = z.array(z.looseObject({ name: z.string() })).parse(JSON.parse(await codex(['list', '--json'])));
-        return list.filter(server => server.name === name);
-      },
+      entries: codexEntries,
       install: async () => { await codex(['add', name, ...(env ? ['--env', `MAILMCP_CONFIG=${env.MAILMCP_CONFIG}`] : []), '--', ...command]); },
       uninstall: async () => { await codex(['remove', name]); },
     },
