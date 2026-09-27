@@ -338,7 +338,12 @@ function deleteEmptyMailbox(mail, account, config, path) {
     deletionDialog(mail, process, viewer, account, path).remove.click();
   } catch (error) {
     cancelMailboxDeletion(mail, account, path, windowId);
-    throw error;
+    try { requireEmptyMailbox(account, path); }
+    catch (stateError) {
+      if (String(stateError.message).indexOf('MAILBOX_NOT_EMPTY:') === 0) throw stateError;
+    }
+    if (String(error.message).indexOf('MAILBOX_') === 0) throw error;
+    throw new Error('MAILBOX_UI_UNAVAILABLE: Mail controls changed or became unavailable. Inspect the folder before retrying. ' + error.message);
   }
 }
 
