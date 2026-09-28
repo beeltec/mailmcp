@@ -250,12 +250,14 @@ const xdgConfig = process.env.XDG_CONFIG_HOME ?? join(home, '.config');
 const gemini = join(process.env.GEMINI_CLI_HOME ?? home, '.gemini');
 const claude = join(process.env.CLAUDE_CONFIG_DIR ?? home, '.claude.json');
 
+const claudeDesktop = join(home, 'Library', 'Application Support', 'Claude');
 const cursor = join(home, '.cursor');
 const opencode = join(xdgConfig, 'opencode');
 const pi = process.env.PI_CODING_AGENT_DIR ?? join(home, '.pi', 'agent');
 
 function detectables(scope: Scope, root: string): Detectable[] {
   const hasClaude = () => commandExists('claude');
+  const hasClaudeDesktop = () => exists(claudeDesktop);
   const hasGemini = () => exists(gemini);
   const hasOpencode = () => exists(opencode);
   const hasPi = () => exists(pi);
@@ -265,6 +267,8 @@ function detectables(scope: Scope, root: string): Detectable[] {
   if (scope === 'project') return [
     jsonHarness('Claude Code', hasClaude, [join(root, '.mcp.json')], 'mcpServers', stdioEdits,
       { hint: 'asks for approval on first start', config }),
+    jsonHarness('Claude Desktop', hasClaudeDesktop, [join(root, '.mcp.json')], 'mcpServers', stdioEdits,
+      { hint: 'Code tab only', config }),
     codexProject(root, config),
     jsonHarness('Cursor', () => exists(cursor), [join(root, '.cursor', 'mcp.json')], 'mcpServers', stdioEdits, { config }),
     jsonHarness('Gemini CLI', hasGemini, [join(root, '.gemini', 'settings.json')], 'mcpServers', stdioEdits, { config }),
@@ -284,6 +288,7 @@ function detectables(scope: Scope, root: string): Detectable[] {
       update: installClaude,
       uninstall: async () => { await run('claude', ['mcp', 'remove', '--scope', 'user', name]); },
     },
+    jsonHarness('Claude Desktop', hasClaudeDesktop, [join(claudeDesktop, 'claude_desktop_config.json')], 'mcpServers', stdioEdits),
     {
       label: 'Codex',
       available: () => commandExists('codex'),

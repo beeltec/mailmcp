@@ -23,11 +23,12 @@ Setup lets you select:
 2. The Trash mailbox of each account (detected automatically when possible)
 3. The tools the server offers (destructive tools are off by default)
 4. The scope: user (all projects) or project (the current directory)
-5. The harnesses to install the server in: Claude Code, Codex, Cursor, Gemini CLI, opencode, and pi
+5. The harnesses to install the server in: Claude Code, Claude Desktop, Codex, Cursor, Gemini CLI, opencode, and pi
 
 | Harness | User scope | Project scope |
 | --- | --- | --- |
 | Claude Code | `~/.claude.json` | `.mcp.json` |
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` | `.mcp.json` (Code tab only) |
 | Codex | `~/.codex/config.toml` | `.codex/config.toml` (trusted projects only) |
 | Cursor | `~/.cursor/mcp.json` | `.cursor/mcp.json` |
 | Gemini CLI | `~/.gemini/settings.json` | `.gemini/settings.json` |
