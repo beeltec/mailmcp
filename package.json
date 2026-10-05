@@ -1,6 +1,6 @@
 {
   "name": "@beeltec/mailmcp",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Local MCP server for Apple Mail",
   "type": "module",
   "bin": {
