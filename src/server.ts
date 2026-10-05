@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, realpath, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { mkdtemp, realpath, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
@@ -212,14 +212,12 @@ export async function startServer(): Promise<void> {
   tool('trash_message', 'Move a message to the Trash mailbox selected during setup. Never permanently deletes or empties Trash.', {
     accountId, ref,
   }, false, async (args, signal) => callMail('trash_message', args, account(args.accountId), signal));
-  tool('save_attachment', 'Save one downloaded attachment in a new private directory under ~/Downloads/mailmcp. Never overwrites existing files.', {
+  tool('save_attachment', 'Save one downloaded attachment in a new private directory in the OS temp folder. Never overwrites existing files.', {
     accountId, ref, attachmentId: z.string().min(1).max(2000),
     fileName: z.string().min(1).max(200).regex(/^[^/\\\0]+$/u).refine(value => value !== '.' && value !== '..'),
   }, false, async (args, signal) => {
     const selected = account(args.accountId);
-    const root = join(homedir(), 'Downloads', 'mailmcp');
-    await mkdir(root, { recursive: true, mode: 0o700 });
-    const directory = await mkdtemp(join(root, 'attachment-'));
+    const directory = await mkdtemp(join(tmpdir(), 'mailmcp-attachment-'));
     const destination = join(directory, args.fileName);
     await callMail('save_attachment', { ...args, destination }, selected, signal);
     const saved = await stat(destination);
