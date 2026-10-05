@@ -72,7 +72,7 @@ MCP tools cannot change the account allowlist.
 | `move_message`, `trash_message` | Move a message within an account or into its Trash |
 | `create_draft`, `reply_to_message`, `forward_message` | Create plain-text drafts |
 | `get_draft` | Read a draft and get its revision for sending |
-| `add_attachment`, `save_attachment` | Attach a local file or save a received attachment to `~/Downloads/mailmcp` |
+| `add_attachment`, `save_attachment` | Attach a local file or save a received attachment to a private folder in the OS temp folder |
 | `send_draft` | Send a draft created in this session |
 
 ## Limits
