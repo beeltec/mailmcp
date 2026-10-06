@@ -79,9 +79,14 @@ MCP tools cannot change the account allowlist.
 
 - Drafts can only be sent from the server session that created them.
 - `send_draft` needs the current revision from `get_draft`. Do not retry a timed-out send.
+- mailmcp inserts the draft body through a temporary Mail signature, because Mail quotes text that a script sets directly. The draft window shows its name. Do not select another signature in such a draft, because Mail then replaces the body.
+- Replies and forwards need Mail's setting "Place signature above quoted text" (on by default). Otherwise the body appears below the quoted original.
+- mailmcp cannot read body edits made in the draft window. `send_draft` still detects a changed sender, subject, signature or recipient list.
+- `add_attachment` works only with new drafts. Mail puts the attachment above the body. Forwards keep the original attachments.
 - Search pages return at most 50 results. Follow `nextOffset` until it is `null`.
 - Moves between accounts are not supported.
 - Each request times out after 45 seconds. A timed-out write can still complete in Mail.
+- After a timed-out draft request, a temporary `mailmcp draft body` signature can stay in Mail. mailmcp deletes it with the next draft in the same session. You can also delete it in Mail settings.
 
 ## Development
 
