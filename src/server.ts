@@ -32,7 +32,10 @@ const draftSchema = z.object({
 });
 type DraftInfo = z.infer<typeof draftSchema>;
 type DraftKind = 'new' | 'reply' | 'forward';
-type Draft = { account: AccountConfig; id: number; kind: DraftKind; body: string; attachments: string[]; preview?: DraftInfo; revision?: string };
+type Draft = {
+  account: AccountConfig; id: number; kind: DraftKind; body: string; signature: string | null;
+  attachments: string[]; preview?: DraftInfo; revision?: string;
+};
 
 export async function startServer(): Promise<void> {
   const config = await loadConfig();
@@ -65,7 +68,12 @@ export async function startServer(): Promise<void> {
 
   function preview(token: string, info: unknown): object {
     const selected = draft(token);
-    selected.preview = draftSchema.parse(info);
+    const parsed = draftSchema.parse(info);
+    if (parsed.signature !== selected.signature) {
+      drafts.delete(token);
+      throw new Error('The draft signature changed in Mail, so Mail replaced the body. This draft handle is revoked. Finish the draft in Mail.');
+    }
+    selected.preview = parsed;
     selected.revision = createHash('sha256').update(JSON.stringify({ info: selected.preview, attachments: selected.attachments })).digest('hex');
     return { draftToken: token, revision: selected.revision, ...selected.preview, body: selected.body,
       bodyNote: 'This is the body that mailmcp inserted. Mail does not show edits made in the draft window.',
@@ -227,14 +235,27 @@ export async function startServer(): Promise<void> {
     return { path: destination, bytes: saved.size };
   });
 
+  const leftoverSignatures = new Map<string, AccountConfig>();
+  async function deleteBodySignature(bodyId: string, selected: AccountConfig): Promise<boolean> {
+    try {
+      await callMail('delete_body_signature', { bodyId }, selected, AbortSignal.timeout(5000));
+      leftoverSignatures.delete(bodyId);
+      return true;
+    } catch {
+      leftoverSignatures.set(bodyId, selected);
+      return false;
+    }
+  }
+
   async function callWithBody(operation: string, args: object, selected: AccountConfig, signal: AbortSignal): Promise<unknown> {
+    for (const [bodyId, owner] of leftoverSignatures) await deleteBodySignature(bodyId, owner);
     const bodyId = randomUUID();
     try {
       return await callMail(operation, { ...args, bodyId }, selected, signal);
     } catch (error) {
       // A timeout or cancellation stops the script before it can delete the temporary signature.
-      await callMail('delete_body_signature', { bodyId }, selected, AbortSignal.timeout(5000)).catch(() => undefined);
-      throw error;
+      if (await deleteBodySignature(bodyId, selected)) throw error;
+      throw new Error(`${error instanceof Error ? error.message : 'Mail operation failed.'} The Mail signature "mailmcp draft body ${bodyId}" can still contain the draft body. mailmcp tries to delete it again with the next draft. You can also delete it in Mail settings.`);
     }
   }
 
@@ -242,7 +263,7 @@ export async function startServer(): Promise<void> {
     if (drafts.size >= 100) throw new Error('This session already has 100 draft handles. Finish drafts or restart the connection.');
     const info = draftSchema.parse(await callWithBody('create_draft', args, selected, signal));
     const token = randomUUID();
-    drafts.set(token, { account: selected, id: info.id, kind: args.kind, body: args.body, attachments: [] });
+    drafts.set(token, { account: selected, id: info.id, kind: args.kind, body: args.body, signature: info.signature, attachments: [] });
     return preview(token, info);
   }
   tool('create_draft', 'Create and save a visible plain-text draft. Does not send. Only the configured sender address is used.', {
