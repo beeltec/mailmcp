@@ -379,6 +379,10 @@ function dispatch(mail, request) {
       return { id: account.id(), name: account.name(), emails: account.emailAddresses() };
     });
   }
+  if (request.operation === 'delete_body_signature') {
+    deleteBodySignature(mail, args.bodyId);
+    return { deleted: true };
+  }
   var account = resolveAccount(mail, request.account);
   if (['create_draft', 'get_draft', 'add_attachment', 'send_draft'].indexOf(request.operation) !== -1) {
     verifySender(mail, request.account);
@@ -537,9 +541,6 @@ function dispatch(mail, request) {
       mail.save(draft);
       return draftInfo(draft);
     }
-    case 'delete_body_signature':
-      deleteBodySignature(mail, args.bodyId);
-      return { deleted: true };
     case 'get_draft':
       return draftInfo(outgoing(mail, args.id, request.account.email));
     case 'add_attachment': {
