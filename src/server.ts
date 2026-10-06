@@ -27,7 +27,7 @@ function utcDate(value: string | undefined): string | undefined {
   return /(?:Z|[+-]\d{2}:\d{2})$/u.test(value) ? value : `${value}Z`;
 }
 const draftSchema = z.object({
-  id: z.number().int(), sender: z.string(), subject: z.string(),
+  id: z.number().int(), sender: z.string(), subject: z.string(), signature: z.string().nullable(),
   to: z.array(z.string()), cc: z.array(z.string()), bcc: z.array(z.string()),
 });
 type DraftInfo = z.infer<typeof draftSchema>;
@@ -227,9 +227,20 @@ export async function startServer(): Promise<void> {
     return { path: destination, bytes: saved.size };
   });
 
+  async function callWithBody(operation: string, args: object, selected: AccountConfig, signal: AbortSignal): Promise<unknown> {
+    const bodyId = randomUUID();
+    try {
+      return await callMail(operation, { ...args, bodyId }, selected, signal);
+    } catch (error) {
+      // A timeout or cancellation stops the script before it can delete the temporary signature.
+      await callMail('delete_body_signature', { bodyId }, selected, AbortSignal.timeout(5000)).catch(() => undefined);
+      throw error;
+    }
+  }
+
   async function create(selected: AccountConfig, args: { kind: DraftKind; body: string }, signal: AbortSignal): Promise<object> {
     if (drafts.size >= 100) throw new Error('This session already has 100 draft handles. Finish drafts or restart the connection.');
-    const info = draftSchema.parse(await callMail('create_draft', args, selected, signal));
+    const info = draftSchema.parse(await callWithBody('create_draft', args, selected, signal));
     const token = randomUUID();
     drafts.set(token, { account: selected, id: info.id, kind: args.kind, body: args.body, attachments: [] });
     return preview(token, info);
@@ -261,7 +272,7 @@ export async function startServer(): Promise<void> {
     delete selected.preview;
     delete selected.revision;
     try {
-      const info = await callMail('add_attachment', { id: selected.id, path, body: selected.body }, selected.account, signal);
+      const info = await callWithBody('add_attachment', { id: selected.id, path, body: selected.body }, selected.account, signal);
       selected.attachments.push(path);
       return preview(args.draftToken, info);
     } catch (error) {

@@ -179,8 +179,9 @@ function outgoing(mail, id, email) {
 }
 
 function draftInfo(draft) {
+  var signature = draft.messageSignature();
   return {
-    id: draft.id(), sender: draft.sender(), subject: draft.subject(),
+    id: draft.id(), sender: draft.sender(), subject: draft.subject(), signature: signature ? signature.name() : null,
     to: recipients(draft.toRecipients), cc: recipients(draft.ccRecipients), bcc: recipients(draft.bccRecipients),
   };
 }
@@ -190,20 +191,21 @@ function draftInfo(draft) {
 // The content property does not show the inserted text.
 var bodySignaturePrefix = 'mailmcp draft body ';
 
-function insertBody(mail, draft, body) {
-  mail.signatures().forEach(function (signature) {
-    if (signature.name().indexOf(bodySignaturePrefix) === 0) mail.delete(signature);
-  });
+function insertBody(mail, draft, body, bodyId) {
   if (!body) return;
-  var name = bodySignaturePrefix + $.NSUUID.UUID.UUIDString.js;
+  var name = bodySignaturePrefix + bodyId;
   mail.signatures.push(mail.Signature({ name: name, content: body }));
   try {
     draft.messageSignature = mail.signatures.byName(name);
     var applied = draft.messageSignature();
     if (!applied || applied.name() !== name) throw new Error('Mail did not insert the draft body. Inspect the draft in Mail. It was not sent.');
   } finally {
-    mail.delete(mail.signatures.byName(name));
+    deleteBodySignature(mail, bodyId);
   }
+}
+
+function deleteBodySignature(mail, bodyId) {
+  mail.signatures.whose({ name: bodySignaturePrefix + bodyId })().forEach(function (signature) { mail.delete(signature); });
 }
 
 function setRecipients(mail, draft, args) {
@@ -530,18 +532,21 @@ function dispatch(mail, request) {
         if (args.kind === 'forward') setRecipients(mail, draft, args);
       }
       // Insert the body before the window opens. If not, Mail can save before it inserts the body.
-      insertBody(mail, draft, args.body);
+      insertBody(mail, draft, args.body, args.bodyId);
       draft.visible = true;
       mail.save(draft);
       return draftInfo(draft);
     }
+    case 'delete_body_signature':
+      deleteBodySignature(mail, args.bodyId);
+      return { deleted: true };
     case 'get_draft':
       return draftInfo(outgoing(mail, args.id, request.account.email));
     case 'add_attachment': {
       var draft = outgoing(mail, args.id, request.account.email);
       // Mail replaces the complete body when a script adds an attachment. Insert the body again.
       draft.content.attachments.push(mail.Attachment({ fileName: Path(args.path) }));
-      insertBody(mail, draft, args.body);
+      insertBody(mail, draft, args.body, args.bodyId);
       mail.save(draft);
       return draftInfo(draft);
     }
