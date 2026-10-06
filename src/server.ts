@@ -236,9 +236,9 @@ export async function startServer(): Promise<void> {
   });
 
   const leftoverSignatures = new Map<string, AccountConfig>();
-  async function deleteBodySignature(bodyId: string, selected: AccountConfig): Promise<boolean> {
+  async function deleteBodySignature(bodyId: string, selected: AccountConfig, signal = AbortSignal.timeout(5000)): Promise<boolean> {
     try {
-      await callMail('delete_body_signature', { bodyId }, selected, AbortSignal.timeout(5000));
+      await callMail('delete_body_signature', { bodyId }, selected, signal);
       leftoverSignatures.delete(bodyId);
       return true;
     } catch {
@@ -248,7 +248,10 @@ export async function startServer(): Promise<void> {
   }
 
   async function callWithBody(operation: string, args: object, selected: AccountConfig, signal: AbortSignal): Promise<unknown> {
-    for (const [bodyId, owner] of leftoverSignatures) await deleteBodySignature(bodyId, owner);
+    for (const [bodyId, owner] of leftoverSignatures) {
+      if (signal.aborted) break;
+      await deleteBodySignature(bodyId, owner, AbortSignal.any([signal, AbortSignal.timeout(5000)]));
+    }
     const bodyId = randomUUID();
     try {
       return await callMail(operation, { ...args, bodyId }, selected, signal);
