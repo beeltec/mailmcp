@@ -27,11 +27,12 @@ function utcDate(value: string | undefined): string | undefined {
   return /(?:Z|[+-]\d{2}:\d{2})$/u.test(value) ? value : `${value}Z`;
 }
 const draftSchema = z.object({
-  id: z.number().int(), sender: z.string(), subject: z.string(), body: z.string(),
+  id: z.number().int(), sender: z.string(), subject: z.string(),
   to: z.array(z.string()), cc: z.array(z.string()), bcc: z.array(z.string()),
 });
 type DraftInfo = z.infer<typeof draftSchema>;
-type Draft = { account: AccountConfig; id: number; attachments: string[]; preview?: DraftInfo; revision?: string };
+type DraftKind = 'new' | 'reply' | 'forward';
+type Draft = { account: AccountConfig; id: number; kind: DraftKind; body: string; attachments: string[]; preview?: DraftInfo; revision?: string };
 
 export async function startServer(): Promise<void> {
   const config = await loadConfig();
@@ -66,7 +67,8 @@ export async function startServer(): Promise<void> {
     const selected = draft(token);
     selected.preview = draftSchema.parse(info);
     selected.revision = createHash('sha256').update(JSON.stringify({ info: selected.preview, attachments: selected.attachments })).digest('hex');
-    return { draftToken: token, revision: selected.revision, ...selected.preview,
+    return { draftToken: token, revision: selected.revision, ...selected.preview, body: selected.body,
+      bodyNote: 'This is the body that mailmcp inserted. Mail does not show edits made in the draft window.',
       addedAttachments: selected.attachments,
       attachmentNote: 'Mail cannot reliably enumerate open-draft attachments. This list records files added through MCP, not a complete inventory. Inspect attachments in Mail before sending.',
     };
@@ -225,31 +227,32 @@ export async function startServer(): Promise<void> {
     return { path: destination, bytes: saved.size };
   });
 
-  async function create(selected: AccountConfig, args: object, signal: AbortSignal): Promise<object> {
+  async function create(selected: AccountConfig, args: { kind: DraftKind; body: string }, signal: AbortSignal): Promise<object> {
     if (drafts.size >= 100) throw new Error('This session already has 100 draft handles. Finish drafts or restart the connection.');
     const info = draftSchema.parse(await callMail('create_draft', args, selected, signal));
     const token = randomUUID();
-    drafts.set(token, { account: selected, id: info.id, attachments: [] });
+    drafts.set(token, { account: selected, id: info.id, kind: args.kind, body: args.body, attachments: [] });
     return preview(token, info);
   }
   tool('create_draft', 'Create and save a visible plain-text draft. Does not send. Only the configured sender address is used.', {
     accountId, to: addresses.min(1), cc: addresses.default([]), bcc: addresses.default([]), subject, body,
   }, false, async (args, signal) => create(account(args.accountId), { ...args, kind: 'new' }, signal));
-  tool('reply_to_message', 'Create a native reply draft with up to 100,000 characters of original text. Review actual recipients before sending. Does not send.', {
+  tool('reply_to_message', 'Create a native reply draft. Mail adds its usual quote of the original below the body. Review actual recipients before sending. Does not send.', {
     accountId, ref, body, replyAll: z.boolean().default(false),
   }, false, async (args, signal) => create(account(args.accountId), { ...args, kind: 'reply' }, signal));
-  tool('forward_message', 'Create a text forward draft with up to 100,000 characters of original text. Original attachments are NOT copied. For a complete forward, use read_message, save_attachment and add_attachment for each original attachment before sending. Does not send.', {
+  tool('forward_message', 'Create a native forward draft. Mail adds the original message and its attachments below the body. Does not send.', {
     accountId, ref, to: addresses.min(1), cc: addresses.default([]), bcc: addresses.default([]), body,
   }, false, async (args, signal) => create(account(args.accountId), { ...args, kind: 'forward' }, signal));
-  tool('get_draft', 'Read the current draft body and all recipients. Returns the revision required for sending.', { draftToken }, true,
+  tool('get_draft', 'Read the draft body, subject and all recipients. Returns the revision required for sending.', { draftToken }, true,
     async (args, signal) => {
       const selected = draft(args.draftToken);
       return preview(args.draftToken, await callMail('get_draft', { id: selected.id }, selected.account, signal));
     });
-  tool('add_attachment', 'Attach a local regular file explicitly selected by the user to a draft. Maximum file size is 25 MiB.', {
+  tool('add_attachment', 'Attach a local regular file explicitly selected by the user to a draft from create_draft. Replies and forwards are not supported. Mail puts attachments above the body. Maximum file size is 25 MiB.', {
     draftToken, path: z.string().min(1).max(4096),
   }, false, async (args, signal) => {
     const selected = draft(args.draftToken);
+    if (selected.kind !== 'new') throw new Error('Mail removes the quoted original when a script attaches a file to a reply or forward. Attach the file in Mail, or use create_draft for a new message.');
     if (!isAbsolute(args.path)) throw new Error('Use an absolute file path.');
     const path = await realpath(args.path);
     const file = await stat(path);
@@ -258,7 +261,7 @@ export async function startServer(): Promise<void> {
     delete selected.preview;
     delete selected.revision;
     try {
-      const info = await callMail('add_attachment', { id: selected.id, path }, selected.account, signal);
+      const info = await callMail('add_attachment', { id: selected.id, path, body: selected.body }, selected.account, signal);
       selected.attachments.push(path);
       return preview(args.draftToken, info);
     } catch (error) {

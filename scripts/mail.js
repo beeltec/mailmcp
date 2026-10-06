@@ -181,13 +181,29 @@ function outgoing(mail, id, email) {
 function draftInfo(draft) {
   return {
     id: draft.id(), sender: draft.sender(), subject: draft.subject(),
-    body: normalizedBody(draft.content()),
     to: recipients(draft.toRecipients), cc: recipients(draft.ccRecipients), bcc: recipients(draft.bccRecipients),
   };
 }
 
-function normalizedBody(text) {
-  return text.replace(/\uFFFC/g, '').replace(/\s+$/, '');
+// Mail quotes all text that a script sets through content (FB11734014).
+// Mail inserts signatures as native text. Thus a temporary signature holds the body.
+// The content property does not show the inserted text.
+var bodySignaturePrefix = 'mailmcp draft body ';
+
+function insertBody(mail, draft, body) {
+  mail.signatures().forEach(function (signature) {
+    if (signature.name().indexOf(bodySignaturePrefix) === 0) mail.delete(signature);
+  });
+  if (!body) return;
+  var name = bodySignaturePrefix + $.NSUUID.UUID.UUIDString.js;
+  mail.signatures.push(mail.Signature({ name: name, content: body }));
+  try {
+    draft.messageSignature = mail.signatures.byName(name);
+    var applied = draft.messageSignature();
+    if (!applied || applied.name() !== name) throw new Error('Mail did not insert the draft body. Inspect the draft in Mail. It was not sent.');
+  } finally {
+    mail.delete(mail.signatures.byName(name));
+  }
 }
 
 function setRecipients(mail, draft, args) {
@@ -502,7 +518,7 @@ function dispatch(mail, request) {
     case 'create_draft': {
       var draft;
       if (args.kind === 'new') {
-        draft = mail.OutgoingMessage({ sender: request.account.email, subject: args.subject, content: args.body, visible: true });
+        draft = mail.OutgoingMessage({ sender: request.account.email, subject: args.subject });
         mail.outgoingMessages.push(draft);
         setRecipients(mail, draft, args);
       } else {
@@ -510,23 +526,22 @@ function dispatch(mail, request) {
         draft = args.kind === 'reply'
           ? mail.reply(original, { openingWindow: false, replyToAll: args.replyAll })
           : mail.forward(original, { openingWindow: false });
-        draft.properties = { sender: request.account.email,
-          content: args.body + '\n\nFrom: ' + original.sender() + '\nSubject: ' + original.subject()
-            + '\n\n' + original.content().slice(0, 100000) };
+        draft.sender = request.account.email;
         if (args.kind === 'forward') setRecipients(mail, draft, args);
-        draft.visible = true;
       }
+      // Insert the body before the window opens. If not, Mail can save before it inserts the body.
+      insertBody(mail, draft, args.body);
+      draft.visible = true;
       mail.save(draft);
-      if (normalizedBody(draft.content()).indexOf(normalizedBody(args.body)) !== 0) {
-        throw new Error('Mail did not retain the draft body. Inspect the draft in Mail. It was not sent.');
-      }
       return draftInfo(draft);
     }
     case 'get_draft':
       return draftInfo(outgoing(mail, args.id, request.account.email));
     case 'add_attachment': {
       var draft = outgoing(mail, args.id, request.account.email);
+      // Mail replaces the complete body when a script adds an attachment. Insert the body again.
       draft.content.attachments.push(mail.Attachment({ fileName: Path(args.path) }));
+      insertBody(mail, draft, args.body);
       mail.save(draft);
       return draftInfo(draft);
     }
