@@ -536,8 +536,11 @@ function dispatch(mail, request) {
         if (args.kind === 'forward') setRecipients(mail, draft, args);
       }
       // Insert the body before the window opens. If not, Mail can save before it inserts the body.
-      insertBody(mail, draft, args.body, args.bodyId);
-      draft.visible = true;
+      try {
+        insertBody(mail, draft, args.body, args.bodyId);
+      } finally {
+        draft.visible = true;
+      }
       mail.save(draft);
       return draftInfo(draft);
     }
